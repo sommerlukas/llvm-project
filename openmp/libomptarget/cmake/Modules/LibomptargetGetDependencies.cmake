@@ -109,6 +109,24 @@ mark_as_advanced(
   LIBOMPTARGET_DEP_LIBFFI_LIBRARIES)
   
 ################################################################################
+# Looking for TaPaSCo...
+################################################################################
+
+find_package(TapascoTLKM QUIET)
+find_package(TapascoCommon QUIET)
+find_package(TapascoPlatform QUIET)
+find_package(Tapasco QUIET)
+
+if(${Tapasco_FOUND} AND ${TapascoPlatform_FOUND}
+AND ${TapascoCommon_FOUND} AND ${TapascoTLKM_FOUND})
+  set(LIBOMPTARGET_DEP_TAPASCO_FOUND TRUE)
+else()
+  set(LIBOMPTARGET_DEP_TAPASCO_FOUND FALSE)
+endif()
+
+mark_as_advanced(LIBOMPTARGET_DEP_TAPASCO_FOUND)
+  
+################################################################################
 # Looking for CUDA...
 ################################################################################
 if (CUDA_TOOLKIT_ROOT_DIR)
