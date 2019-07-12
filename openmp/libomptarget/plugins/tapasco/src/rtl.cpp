@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "omptargetplugin.h"
+#include "tapasco.hpp"
 
 #ifndef TARGET_NAME
 #define TARGET_NAME Generic ELF - 64bit
@@ -129,9 +130,33 @@ public:
 
 static RTLDeviceInfoTy DeviceInfo(NUMBER_OF_DEVICES);
 
+class TapascoDeviceInfoTy{
+public:
+  TapascoDeviceInfoTy() : tapasco{nullptr}{}
+  
+  ~TapascoDeviceInfoTy(){delete tapasco;}
+  
+  tapasco::Tapasco * tapasco;
+};
+
+static TapascoDeviceInfoTy TapascoInfo;
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+tapasco::Tapasco& tapasco_inst(){
+  return *(TapascoInfo.tapasco);
+}
+
+bool check_tapasco(tapasco_res_t return_code){
+  if(return_code!=TAPASCO_SUCCESS){
+    DP("TaPaSCo ERROR: %s\n", tapasco_strerror(return_code));
+    return false;
+  }
+  return true;
+}
 
 int32_t __tgt_rtl_is_valid_binary(__tgt_device_image *image) {
 // If we don't have a valid ELF ID we can just fail.
@@ -142,9 +167,18 @@ int32_t __tgt_rtl_is_valid_binary(__tgt_device_image *image) {
 #endif
 }
 
-int32_t __tgt_rtl_number_of_devices() { return NUMBER_OF_DEVICES; }
+int32_t __tgt_rtl_number_of_devices() { 
+  // We currently only support a single FPGA device at a time in TaPaSCo.
+  return 1; 
+}
 
-int32_t __tgt_rtl_init_device(int32_t device_id) { return OFFLOAD_SUCCESS; }
+int32_t __tgt_rtl_init_device(int32_t device_id) {
+  TapascoInfo.tapasco = new tapasco::Tapasco{};
+  if(TapascoInfo.tapasco && TapascoInfo.tapasco->is_ready()){
+    return OFFLOAD_SUCCESS;
+  }
+  return OFFLOAD_FAIL;
+}
 
 __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
                                           __tgt_device_image *image) {
@@ -272,24 +306,51 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
 }
 
 void *__tgt_rtl_data_alloc(int32_t device_id, int64_t size, void *hst_ptr) {
-  void *ptr = malloc(size);
-  return ptr;
+  if(device_id!=0){
+    DP("Unexpected device ID %d\n", device_id);
+    return nullptr;
+  }
+  tapasco_handle_t device_ptr;
+  if(check_tapasco(tapasco_inst().alloc(device_ptr, 
+    size, TAPASCO_DEVICE_ALLOC_FLAGS_NONE))){
+    return (void*) device_ptr;
+  }
+  return nullptr;
 }
 
 int32_t __tgt_rtl_data_submit(int32_t device_id, void *tgt_ptr, void *hst_ptr,
                               int64_t size) {
-  memcpy(tgt_ptr, hst_ptr, size);
-  return OFFLOAD_SUCCESS;
+  if(device_id!=0){
+    DP("Unexpected device ID %d\n", device_id);
+    return OFFLOAD_FAIL;
+  }
+  if(check_tapasco(tapasco_inst().copy_to(hst_ptr, (tapasco_handle_t) tgt_ptr, 
+    size, TAPASCO_DEVICE_COPY_FLAGS_NONE))){
+    return OFFLOAD_SUCCESS;
+  }
+  return OFFLOAD_FAIL;
 }
 
 int32_t __tgt_rtl_data_retrieve(int32_t device_id, void *hst_ptr, void *tgt_ptr,
                                 int64_t size) {
-  memcpy(hst_ptr, tgt_ptr, size);
-  return OFFLOAD_SUCCESS;
+  if(device_id!=0){
+    DP("Unexpected device ID %d\n", device_id);
+    return OFFLOAD_FAIL;
+  }
+  if(check_tapasco(tapasco_inst().copy_from((tapasco_handle_t) tgt_ptr, hst_ptr, 
+    size, TAPASCO_DEVICE_COPY_FLAGS_NONE))){
+    return OFFLOAD_SUCCESS;
+  }
+  return OFFLOAD_FAIL;
 }
 
 int32_t __tgt_rtl_data_delete(int32_t device_id, void *tgt_ptr) {
-  free(tgt_ptr);
+  if(device_id!=0){
+    DP("Unexpected device ID %d\n", device_id);
+    return OFFLOAD_FAIL;
+  }
+  tapasco_inst().free((tapasco_handle_t) tgt_ptr, 
+    TAPASCO_DEVICE_ALLOC_FLAGS_NONE);
   return OFFLOAD_SUCCESS;
 }
 
