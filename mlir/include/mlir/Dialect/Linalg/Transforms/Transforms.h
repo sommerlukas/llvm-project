@@ -516,6 +516,24 @@ LogicalResult vectorizeOpPrecondition(Operation *op,
 
 using LinalgLoops = SmallVector<Operation *, 4>;
 
+// Forward declaration
+struct ControlDropUnitDims;
+
+/// Collapse the given \p value to \p targetShape. The \p reassociation is used
+/// when `rankReductionStrategy` of \p control is set to
+/// `RankReductionStrategy::ReassociativeReshape`.
+Value collapseValue(RewriterBase &rewriter, Location loc, Value operand,
+                    ArrayRef<int64_t> targetShape,
+                    ArrayRef<ReassociationIndices> reassociation,
+                    const ControlDropUnitDims &control);
+
+/// Expand the given \p value so that the type matches the type of \p origDest.
+/// The \p reassociation is used when `rankReductionStrategy` of \p control is
+/// set to `RankReductionStrategy::ReassociativeReshape`.
+Value expandValue(RewriterBase &rewriter, Location loc, Value result,
+                  Value origDest, ArrayRef<ReassociationIndices> reassociation,
+                  const ControlDropUnitDims &control);
+
 /// Transformation to drop unit-extent dimensions from `linalg.generic`
 /// operations.
 struct ControlDropUnitDims {
@@ -524,7 +542,19 @@ struct ControlDropUnitDims {
   RankReductionStrategy rankReductionStrategy =
       RankReductionStrategy::ReassociativeReshape;
 
+  /// Instances of this type are used to control which dimensions of an operand
+  /// are considered for dropping unit extent dimensions. The parameter to the
+  /// function is the operation itself, the expected return is a list of
+  /// dimensions to consider for dropping unit extent dimensions. If the
+  /// operation should not be have any dimensions dropped, implementations
+  /// should return an empty list.
   using ControlFnTy = std::function<SmallVector<unsigned>(Operation *)>;
+
+  /// Function to control which dimensions, if any, are to be considered for
+  /// dropping unit extent dimensions. The default behavior is to consider all
+  /// dimensions of a \c linalg.generic or \c tensor.pad operation for dropping.
+  /// Users of the \ref dropUnitDims interface can override the default behavior
+  /// by setting this member to their own implementation.
   ControlFnTy controlFn = [](Operation *op) {
     if (auto genericOp = dyn_cast_or_null<GenericOp>(op)) {
       return llvm::to_vector(llvm::seq<unsigned>(0, genericOp.getNumLoops()));
@@ -534,6 +564,72 @@ struct ControlDropUnitDims {
           llvm::seq<unsigned>(0, padOp.getSourceType().getRank()));
     }
     return SmallVector<unsigned>{};
+  };
+
+  /// Instances of this type are used to check whether the type of an operand
+  /// can be collapsed. The parameter is the operand type, the function is
+  /// expected to return `true` if the type is safely collapsible and `false`
+  /// otherwise.
+  using ReshapableTypeFnTy = std::function<bool(Type)>;
+
+  /// Function used to determine whether an operand can safely be collapsed. The
+  /// default behavior is to enable collapsing for scalar floats and ints,
+  /// memrefs with identity layout and tensors without an encoding.
+  ReshapableTypeFnTy reshapableTypeFn = [](Type ty) -> bool {
+    if (auto memrefOperandType = dyn_cast_or_null<MemRefType>(ty)) {
+      return memrefOperandType.getLayout().isIdentity();
+    }
+    if (auto tensorOperandType = dyn_cast<RankedTensorType>(ty)) {
+      return tensorOperandType.getEncoding() == nullptr;
+    }
+    return ty.isIntOrIndexOrFloat();
+  };
+
+  /// Instances of this type are used to control how operand values are
+  /// collapsed after dropping unit extent dimensions. Next to the control
+  /// struct, rewriter and location, the function receives the operand value to
+  /// collapse, the new target shape and how old dimensions should be grouped.
+  /// The function needs to insert the necessary operations to collapse the
+  /// operand to the target shape and returns the new operand value.
+  using CollapseFnTy = std::function<Value(
+      RewriterBase &, Location, Value, ArrayRef<int64_t>,
+      ArrayRef<ReassociationIndices>, const ControlDropUnitDims &)>;
+
+  /// Function to control how operands are collapsed into their new target shape
+  /// after dropping unit extent dimensions. For the default behavior
+  /// \see linalg::collapseValue.
+  /// Users of the \ref dropUnitDims interface can override the default behavior
+  /// by setting this member to their own implementation.
+  CollapseFnTy collapseFn = [](RewriterBase &rewriter, Location loc,
+                               Value operand, ArrayRef<int64_t> targetShape,
+                               ArrayRef<ReassociationIndices> reassociation,
+                               const ControlDropUnitDims &control) -> Value {
+    return linalg::collapseValue(rewriter, loc, operand, targetShape,
+                                 reassociation, control);
+  };
+
+  /// Instances of this type are used to control how result values are expanded
+  /// into their original shape after dropping unit extent dimensions. Next to
+  /// the control construct, rewriter and location, the function recieves the
+  /// result value, the original value to replace and and information on how the
+  /// new dimensions were grouped.
+  /// The function needs to insert the necessary operations to expand the
+  /// result to the original shape and returns the new result value.
+  using ExpandFnTy = std::function<Value(RewriterBase &, Location, Value, Value,
+                                         ArrayRef<ReassociationIndices>,
+                                         const ControlDropUnitDims &)>;
+
+  /// Function to control how results are expanded into their original shape
+  /// after dropping unit extent dimensions. The default behavior
+  /// \see linalg::expandValue.
+  /// Users of the \ref dropUnitDims interface can override the default behavior
+  /// by setting this member to their own implementation.
+  ExpandFnTy expandFn = [](RewriterBase &rewriter, Location loc, Value result,
+                           Value origDest,
+                           ArrayRef<ReassociationIndices> reassociation,
+                           const ControlDropUnitDims &control) -> Value {
+    return linalg::expandValue(rewriter, loc, result, origDest, reassociation,
+                               control);
   };
 };
 
