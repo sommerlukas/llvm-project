@@ -26,6 +26,7 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/CodeGen/MachinePostDominators.h"
+#include "llvm/CodeGen/ReachingDefAnalysis.h"
 #include "llvm/CodeGen/TargetSchedule.h"
 #include "llvm/Support/BranchProbability.h"
 using namespace llvm;
@@ -39,6 +40,7 @@ private:
   const SIInstrInfo *TII = nullptr;
   const SIRegisterInfo *TRI = nullptr;
   MachineLoopInfo *MLI = nullptr;
+  const ReachingDefInfo *RDI = nullptr;
 
   bool optimizeVccBranch(MachineInstr &MI) const;
   void updateMLIBeforeRemovingEdge(MachineBasicBlock *From,
@@ -81,8 +83,34 @@ private:
   void addOperandAndMods(MachineInstrBuilder &NewMI, unsigned SrcMods,
                          bool IsHiBits, const MachineOperand &SrcMO);
 
+  // Delayed post-RA conversion from a two-address instruction to a
+  // three-address instruction. The copy instructions become redundant after
+  // retargeting the converted instruction to NewDst.
+  struct ThreeAddressCandidate {
+    MachineInstr *TwoAddrMI;
+    Register NewDst;
+    SmallVector<MachineInstr *, 2> CopiesToRemove;
+
+    ThreeAddressCandidate(MachineInstr &TwoAddrMI, Register NewDst,
+                          ArrayRef<MachineInstr *> Copies)
+        : TwoAddrMI(&TwoAddrMI), NewDst(NewDst), CopiesToRemove(Copies) {}
+  };
+  // Check if \p MaybeCopy is a simple copy of \p Src. If it is a supported
+  // copy, return the destination register of the copy.
+  std::optional<Register> checkCopy(MachineInstr &TwoAddress,
+                                    MachineInstr &MaybeCopy, Register Src);
+  // Check whether the two-address instruction should be replaced with a
+  // three-address instruction to avoid copies of the output registers. If the
+  // replacement should take place, returns the destination register for the
+  // replacement and fills \p Copies with the copy instructions to remove after
+  // the replacement.
+  Register
+  shouldReplaceWithThreeAddress(MachineInstr &MI,
+                                SmallVectorImpl<MachineInstr *> &Copies);
+
 public:
-  bool run(MachineFunction &MF, MachineLoopInfo *MLI);
+  bool run(MachineFunction &MF, MachineLoopInfo *MLI,
+           const ReachingDefInfo *RDI);
 };
 
 class SIPreEmitPeepholeLegacy : public MachineFunctionPass {
@@ -94,13 +122,16 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addUsedIfAvailable<MachineLoopInfoWrapperPass>();
     AU.addPreserved<MachineLoopInfoWrapperPass>();
+    AU.addRequired<ReachingDefInfoWrapperPass>();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
     auto *MLIWrapper = getAnalysisIfAvailable<MachineLoopInfoWrapperPass>();
     MachineLoopInfo *MLI = MLIWrapper ? &MLIWrapper->getLI() : nullptr;
-    return SIPreEmitPeephole().run(MF, MLI);
+    const ReachingDefInfo *RDI =
+        &getAnalysis<ReachingDefInfoWrapperPass>().getRDI();
+    return SIPreEmitPeephole().run(MF, MLI, RDI);
   }
 };
 
@@ -763,13 +794,99 @@ MachineInstrBuilder SIPreEmitPeephole::createUnpackedMI(MachineInstr &I,
   return NewMI;
 }
 
+std::optional<Register> SIPreEmitPeephole::checkCopy(MachineInstr &TwoAddress,
+                                                     MachineInstr &MaybeCopy,
+                                                     Register Src) {
+  if (MaybeCopy.isBundle())
+    return std::nullopt;
+
+  switch (MaybeCopy.getOpcode()) {
+  case AMDGPU::COPY:
+  case AMDGPU::V_MOV_B32_e32:
+    break;
+  default:
+    return std::nullopt;
+  }
+
+  MachineOperand CopySrc = MaybeCopy.getOperand(1);
+  if (!CopySrc.isReg() || CopySrc.getReg() != Src)
+    return std::nullopt;
+
+  MachineOperand Dst = MaybeCopy.getOperand(0);
+  if (!Dst.isReg())
+    return std::nullopt;
+
+  Register Reg = Dst.getReg();
+  SmallPtrSet<MachineInstr *, 1> Ignore{&TwoAddress, &MaybeCopy};
+  if (!RDI->isSafeToDefRegAt(&TwoAddress, Reg, Ignore))
+    return std::nullopt;
+
+  if (!RDI->hasSameReachingDef(&TwoAddress, &MaybeCopy, AMDGPU::EXEC))
+    return std::nullopt;
+
+  return Reg;
+}
+
+Register SIPreEmitPeephole::shouldReplaceWithThreeAddress(
+    MachineInstr &MI, SmallVectorImpl<MachineInstr *> &Copies) {
+  MachineOperand *Dst = TII->getNamedOperand(MI, AMDGPU::OpName::vdst);
+  if (!Dst || !Dst->isReg())
+    return Register();
+
+  SmallVector<Register, 2> DestRegs;
+  Register Sub0 = TRI->getSubReg(Dst->getReg(), AMDGPU::sub0);
+  Register Sub1 = TRI->getSubReg(Dst->getReg(), AMDGPU::sub1);
+  if (Sub0 && Sub1) {
+    DestRegs.push_back(Sub0);
+    DestRegs.push_back(Sub1);
+  } else
+    DestRegs.push_back(Dst->getReg());
+
+  SmallVector<Register, 2> Replacements;
+  for (Register SubReg : DestRegs) {
+    if (!SubReg.isPhysical())
+      return Register();
+    if (RDI->isReachingDefLiveOut(&MI, SubReg))
+      return Register();
+
+    SmallPtrSet<MachineInstr *, 1> Uses;
+    RDI->getReachingLocalUses(&MI, SubReg, Uses);
+    if (Uses.size() != 1)
+      return Register();
+
+    MachineInstr &Use = **Uses.begin();
+    std::optional<Register> MaybeRegister = checkCopy(MI, Use, SubReg);
+
+    if (!MaybeRegister)
+      return Register();
+    Replacements.push_back(*MaybeRegister);
+    Copies.push_back(&Use);
+  }
+
+  if (Replacements.size() > 2)
+    return Register();
+
+  if (Replacements.size() == 1)
+    return Replacements.front();
+
+  Register Tuple = TRI->getMatchingSuperReg(Replacements.front(), AMDGPU::sub0,
+                                            TRI->getVGPR64Class());
+  if (!Tuple)
+    return Register();
+
+  if (TRI->getSubReg(Tuple, AMDGPU::sub1) != Replacements[1].asMCReg())
+    return Register();
+  return Tuple;
+}
+
 PreservedAnalyses
 llvm::SIPreEmitPeepholePass::run(MachineFunction &MF,
                                  MachineFunctionAnalysisManager &MFAM) {
   auto *MLI = MFAM.getCachedResult<MachineLoopAnalysis>(MF);
+  const ReachingDefInfo &RDI = MFAM.getResult<ReachingDefAnalysis>(MF);
   SIPreEmitPeephole Impl;
 
-  if (Impl.run(MF, MLI)) {
+  if (Impl.run(MF, MLI, &RDI)) {
     auto PA = getMachineFunctionPassPreservedAnalyses();
     PA.preserve<MachineLoopAnalysis>();
     return PA;
@@ -778,11 +895,13 @@ llvm::SIPreEmitPeepholePass::run(MachineFunction &MF,
   return PreservedAnalyses::all();
 }
 
-bool SIPreEmitPeephole::run(MachineFunction &MF, MachineLoopInfo *LoopInfo) {
+bool SIPreEmitPeephole::run(MachineFunction &MF, MachineLoopInfo *LoopInfo,
+                            const ReachingDefInfo *ReachingDefInfo) {
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   TII = ST.getInstrInfo();
   TRI = &TII->getRegisterInfo();
   MLI = LoopInfo;
+  RDI = ReachingDefInfo;
   bool Changed = false;
 
   MF.RenumberBlocks();
@@ -801,6 +920,58 @@ bool SIPreEmitPeephole::run(MachineFunction &MF, MachineLoopInfo *LoopInfo) {
         Changed |= removeExeczBranch(MI, MBB);
         break;
       }
+    }
+
+    // Delayed optimization to replace two-address instructions followed by
+    // copies with a three-address instruction that directly writes to the
+    // copied registers instead. The pattern we seek to optimize is:
+    // $vgpr2_vgpr3 = V_FMAC_F64 ..., $vgpr_2_vgpr3
+    // $vgpr0 = V_MOV_B32 $vgrp2
+    // $vgpr1 = V_MOV_B32 $vgrp3
+    //
+    // This can be optimized to:
+    // $vgpr0_vgpr1 = V_FMA_F64 ..., $vgpr2_vgpr3
+    //
+    // The TwoAddressInstruction pass handles some cases, but bails in more
+    // complex cases.
+    SmallVector<ThreeAddressCandidate> Candidates;
+    // First, collect the candidates. We can't perform the transformation right
+    // away, it would invalidate the iterator.
+    for (auto &MI : make_early_inc_range(MBB.instrs())) {
+      if (MI.isBundle())
+        continue;
+
+      unsigned Opc = MI.getOpcode();
+      if (Opc != AMDGPU::V_FMAC_F64_e64 && Opc != AMDGPU::V_FMAC_F32_e64 &&
+          Opc != AMDGPU::V_FMAC_F64_e32 && Opc != AMDGPU::V_FMAC_F32_e32)
+        continue;
+
+      SmallVector<MachineInstr *, 2> Copies;
+      if (Register Dst = shouldReplaceWithThreeAddress(MI, Copies))
+        Candidates.emplace_back(MI, Dst, Copies);
+    }
+
+    for (ThreeAddressCandidate &Cand : Candidates) {
+      MachineInstr *ThreeAddrsInst =
+          TII->convertToThreeAddress(*Cand.TwoAddrMI, nullptr, nullptr);
+      if (!ThreeAddrsInst)
+        continue;
+      MachineOperand &NewDst = ThreeAddrsInst->getOperand(0);
+      assert(NewDst.isReg());
+
+      const TargetRegisterClass *DstRC =
+          TII->getRegClass(ThreeAddrsInst->getDesc(), NewDst.getOperandNo());
+      if (DstRC && !DstRC->contains(Cand.NewDst.asMCReg())) {
+        ThreeAddrsInst->eraseFromParent();
+        continue;
+      }
+
+      NewDst.setReg(Cand.NewDst);
+      NewDst.setIsRenamable(false);
+      Cand.TwoAddrMI->eraseFromParent();
+      llvm::for_each(Cand.CopiesToRemove,
+                     [](MachineInstr *Copy) { Copy->eraseFromParent(); });
+      Changed = true;
     }
 
     if (!ST.hasVGPRIndexMode())
