@@ -83,9 +83,10 @@ private:
   void addOperandAndMods(MachineInstrBuilder &NewMI, unsigned SrcMods,
                          bool IsHiBits, const MachineOperand &SrcMO);
 
-  // Delayed post-RA conversion from a two-address instruction to a
-  // three-address instruction. The copy instructions become redundant after
-  // retargeting the converted instruction to NewDst.
+  // Hold information about a candidate for delayed post-RA conversion from a
+  // two-address instruction to a three-address instruction. The copy
+  // instructions become redundant after retargeting the converted instruction
+  // to NewDst.
   struct ThreeAddressCandidate {
     MachineInstr *TwoAddrMI;
     Register NewDst;
@@ -817,10 +818,14 @@ std::optional<Register> SIPreEmitPeephole::checkCopy(MachineInstr &TwoAddress,
     return std::nullopt;
 
   Register Reg = Dst.getReg();
+  // Check that it is safe to define the copy destination register at the
+  // current position of the two-address instruction.
   SmallPtrSet<MachineInstr *, 1> Ignore{&TwoAddress, &MaybeCopy};
   if (!RDI->isSafeToDefRegAt(&TwoAddress, Reg, Ignore))
     return std::nullopt;
 
+  // Check that the two-address instruction and the copy have the same exec
+  // mask.
   if (!RDI->hasSameReachingDef(&TwoAddress, &MaybeCopy, AMDGPU::EXEC))
     return std::nullopt;
 
@@ -846,7 +851,7 @@ Register SIPreEmitPeephole::shouldReplaceWithThreeAddress(
   for (Register SubReg : DestRegs) {
     if (!SubReg.isPhysical())
       return Register();
-    if (RDI->isReachingDefLiveOut(&MI, SubReg))
+    if (RDI->getLocalLiveOutMIDef(MI.getParent(), SubReg) == &MI)
       return Register();
 
     SmallPtrSet<MachineInstr *, 1> Uses;
@@ -869,6 +874,8 @@ Register SIPreEmitPeephole::shouldReplaceWithThreeAddress(
   if (Replacements.size() == 1)
     return Replacements.front();
 
+  // Try to identify a matching super-register/tuple for the f64 case and abort
+  // the transformation if there is none.
   Register Tuple = TRI->getMatchingSuperReg(Replacements.front(), AMDGPU::sub0,
                                             TRI->getVGPR64Class());
   if (!Tuple)

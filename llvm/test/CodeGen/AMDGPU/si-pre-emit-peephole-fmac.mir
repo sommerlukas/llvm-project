@@ -36,3 +36,28 @@ body: |
     $vgpr0 = V_MOV_B32_e32 killed $vgpr2, implicit $exec, implicit $exec
     SI_RETURN implicit killed $vgpr0
 ...
+
+---
+name: fmac_f32_e32_copy_live_out
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr2, $vgpr4
+    successors: %bb.1
+
+    ; CHECK-LABEL: name: fmac_f32_e32_copy_live_out
+    ; CHECK: renamable $vgpr2 = nofpexcept V_FMAC_F32_e32 killed $vgpr4, killed $vgpr0, killed $vgpr2, implicit $mode, implicit $exec
+    ; CHECK-NEXT: $vgpr0 = V_MOV_B32_e32 $vgpr2, implicit $exec, implicit $exec
+    ; CHECK-NEXT: S_BRANCH %bb.1
+    renamable $vgpr2 = nofpexcept V_FMAC_F32_e32 killed renamable $vgpr4, killed renamable $vgpr0, killed renamable $vgpr2, implicit $mode, implicit $exec
+    $vgpr0 = V_MOV_B32_e32 $vgpr2, implicit $exec, implicit $exec
+    S_BRANCH %bb.1
+
+  bb.1:
+    liveins: $vgpr2
+
+    ; CHECK: bb.1:
+    ; CHECK-NEXT: liveins: $vgpr2
+    ; CHECK: SI_RETURN implicit killed $vgpr2
+    SI_RETURN implicit killed $vgpr2
+...
