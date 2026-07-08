@@ -96,18 +96,25 @@ private:
                           ArrayRef<MachineInstr *> Copies)
         : TwoAddrMI(&TwoAddrMI), NewDst(NewDst), CopiesToRemove(Copies) {}
   };
-  // Check if \p MaybeCopy is a simple copy of \p Src. If it is a supported
+  // Return true if MI is a candidate for late conversion to a three-address
+  // instruction to avoid copies.
+  bool isLateThreeAddrPeepholeCandidate(const MachineInstr &MI) const;
+  // Check if MaybeCopy is a simple copy of Src. If it is a supported
   // copy, return the destination register of the copy.
-  std::optional<Register> checkCopy(MachineInstr &TwoAddress,
-                                    MachineInstr &MaybeCopy, Register Src);
+  Register checkCopy(MachineInstr &TwoAddress, MachineInstr &MaybeCopy,
+                     Register Src, const TargetRegisterClass *NewDstRC);
   // Check whether the two-address instruction should be replaced with a
   // three-address instruction to avoid copies of the output registers. If the
   // replacement should take place, returns the destination register for the
-  // replacement and fills \p Copies with the copy instructions to remove after
+  // replacement and fills Copies with the copy instructions to remove after
   // the replacement.
   Register
   shouldReplaceWithThreeAddress(MachineInstr &MI,
                                 SmallVectorImpl<MachineInstr *> &Copies);
+
+  // Convert two-adress instruction in Cand to its three-address equivalent,
+  // targeting the register given in Cand.
+  bool convertToThreeAddressInstr(ThreeAddressCandidate &Cand);
 
 public:
   bool run(MachineFunction &MF, MachineLoopInfo *MLI,
@@ -795,41 +802,79 @@ MachineInstrBuilder SIPreEmitPeephole::createUnpackedMI(MachineInstr &I,
   return NewMI;
 }
 
-std::optional<Register> SIPreEmitPeephole::checkCopy(MachineInstr &TwoAddress,
-                                                     MachineInstr &MaybeCopy,
-                                                     Register Src) {
-  if (MaybeCopy.isBundle())
-    return std::nullopt;
-
-  switch (MaybeCopy.getOpcode()) {
-  case AMDGPU::COPY:
-  case AMDGPU::V_MOV_B32_e32:
-    break;
+bool SIPreEmitPeephole::isLateThreeAddrPeepholeCandidate(
+    const MachineInstr &MI) const {
+  // This is a subset of the opcodes that are convertible to three-address
+  // instructions according to . This is intended. For some cases,
+  // convertToThreeAddress could early-clobber, which would require us to roll
+  // back the transformation. However, rollback is not side-effect free for some
+  // cases in convertToThreeAddress that fold immediates. Therefore, we limit
+  // this peephole to only the instructions for which rollback will not be
+  // necessary.
+  switch (MI.getOpcode()) {
+  case AMDGPU::V_MAC_F16_e32:
+  case AMDGPU::V_MAC_F16_e64:
+  case AMDGPU::V_MAC_F32_e32:
+  case AMDGPU::V_MAC_F32_e64:
+  case AMDGPU::V_MAC_LEGACY_F32_e32:
+  case AMDGPU::V_MAC_LEGACY_F32_e64:
+  case AMDGPU::V_FMAC_F16_e32:
+  case AMDGPU::V_FMAC_F16_e64:
+  case AMDGPU::V_FMAC_F16_t16_e64:
+  case AMDGPU::V_FMAC_F16_fake16_e64:
+  case AMDGPU::V_FMAC_F32_e32:
+  case AMDGPU::V_FMAC_F32_e64:
+  case AMDGPU::V_FMAC_LEGACY_F32_e32:
+  case AMDGPU::V_FMAC_LEGACY_F32_e64:
+  case AMDGPU::V_FMAC_F64_e32:
+  case AMDGPU::V_FMAC_F64_e64:
+    return true;
   default:
-    return std::nullopt;
+    return false;
   }
+}
 
-  MachineOperand CopySrc = MaybeCopy.getOperand(1);
-  if (!CopySrc.isReg() || CopySrc.getReg() != Src)
-    return std::nullopt;
+Register SIPreEmitPeephole::checkCopy(MachineInstr &TwoAddress,
+                                      MachineInstr &MaybeCopy, Register Src,
+                                      const TargetRegisterClass *NewDstRC) {
+  if (MaybeCopy.isBundle())
+    return Register();
+
+  if (!TII->isFoldableCopy(MaybeCopy) ||
+      MaybeCopy.getOpcode() == AMDGPU::WWM_COPY)
+    return Register();
+
+  if (TII->hasAnyModifiersSet(MaybeCopy))
+    return Register();
+
+  auto CopySrc = MaybeCopy.getOperand(TII->getFoldableCopySrcIdx(MaybeCopy));
+  if (!CopySrc.isReg() || CopySrc.getReg() != Src ||
+      CopySrc.getSubReg() != AMDGPU::NoSubRegister)
+    return Register();
 
   MachineOperand Dst = MaybeCopy.getOperand(0);
-  if (!Dst.isReg())
-    return std::nullopt;
+  if (!Dst.isReg() || Dst.getSubReg() != AMDGPU::NoSubRegister)
+    return Register();
 
-  Register Reg = Dst.getReg();
+  Register DstReg = Dst.getReg();
+  if (TRI->getPhysRegBaseClass(DstReg) != TRI->getPhysRegBaseClass(Src))
+    return Register();
+
+  if (NewDstRC && !NewDstRC->contains(DstReg.asMCReg()))
+    return Register();
+
   // Check that it is safe to define the copy destination register at the
   // current position of the two-address instruction.
   SmallPtrSet<MachineInstr *, 1> Ignore{&TwoAddress, &MaybeCopy};
-  if (!RDI->isSafeToDefRegAt(&TwoAddress, Reg, Ignore))
-    return std::nullopt;
+  if (!RDI->isSafeToDefRegAt(&TwoAddress, DstReg, Ignore))
+    return Register();
 
   // Check that the two-address instruction and the copy have the same exec
   // mask.
   if (!RDI->hasSameReachingDef(&TwoAddress, &MaybeCopy, AMDGPU::EXEC))
-    return std::nullopt;
+    return Register();
 
-  return Reg;
+  return DstReg;
 }
 
 Register SIPreEmitPeephole::shouldReplaceWithThreeAddress(
@@ -838,52 +883,94 @@ Register SIPreEmitPeephole::shouldReplaceWithThreeAddress(
   if (!Dst || !Dst->isReg())
     return Register();
 
-  SmallVector<Register, 2> DestRegs;
-  Register Sub0 = TRI->getSubReg(Dst->getReg(), AMDGPU::sub0);
-  Register Sub1 = TRI->getSubReg(Dst->getReg(), AMDGPU::sub1);
-  if (Sub0 && Sub1) {
-    DestRegs.push_back(Sub0);
-    DestRegs.push_back(Sub1);
-  } else
-    DestRegs.push_back(Dst->getReg());
+  const TargetRegisterClass *NewDstRC =
+      TII->getRegClass(MI.getDesc(), Dst->getOperandNo());
 
-  SmallVector<Register, 2> Replacements;
-  for (Register SubReg : DestRegs) {
-    if (!SubReg.isPhysical())
+  auto CheckRegisterCopies =
+      [&](Register Reg, const TargetRegisterClass *ReplacementRC) -> Register {
+    if (!Reg.isPhysical())
       return Register();
-    if (RDI->getLocalLiveOutMIDef(MI.getParent(), SubReg) == &MI)
+    if (RDI->getLocalLiveOutMIDef(MI.getParent(), Reg) == &MI)
       return Register();
 
     SmallPtrSet<MachineInstr *, 1> Uses;
-    RDI->getReachingLocalUses(&MI, SubReg, Uses);
+    RDI->getReachingLocalUses(&MI, Reg, Uses);
     if (Uses.size() != 1)
       return Register();
 
     MachineInstr &Use = **Uses.begin();
-    std::optional<Register> MaybeRegister = checkCopy(MI, Use, SubReg);
+    Register ReplacementReg = checkCopy(MI, Use, Reg, ReplacementRC);
 
-    if (!MaybeRegister)
+    if (!ReplacementReg)
       return Register();
-    Replacements.push_back(*MaybeRegister);
-    Copies.push_back(&Use);
-  }
 
-  if (Replacements.size() > 2)
+    Copies.push_back(&Use);
+    return ReplacementReg;
+  };
+
+  Register DstReg = Dst->getReg();
+  if (Register Replacement = CheckRegisterCopies(DstReg, NewDstRC))
+    return Replacement;
+
+  // If we didn't find a copy for the full register, we might be dealing with a
+  // 64-bit register and copies for the individual parts. Check both
+  // subregisters for matching copies.
+  Register Sub0 = TRI->getSubReg(Dst->getReg(), AMDGPU::sub0);
+  Register Sub1 = TRI->getSubReg(Dst->getReg(), AMDGPU::sub1);
+  if (!Sub0 || !Sub1)
     return Register();
 
-  if (Replacements.size() == 1)
-    return Replacements.front();
+  auto Sub0Replacment = CheckRegisterCopies(Sub0, nullptr);
+  auto Sub1Replacement = CheckRegisterCopies(Sub1, nullptr);
+  if (!Sub0Replacment || !Sub1Replacement)
+    return Register();
 
   // Try to identify a matching super-register/tuple for the f64 case and abort
   // the transformation if there is none.
-  Register Tuple = TRI->getMatchingSuperReg(Replacements.front(), AMDGPU::sub0,
-                                            TRI->getVGPR64Class());
+  if (!NewDstRC)
+    return Register();
+  Register Tuple =
+      TRI->getMatchingSuperReg(Sub0Replacment, AMDGPU::sub0, NewDstRC);
   if (!Tuple)
     return Register();
 
-  if (TRI->getSubReg(Tuple, AMDGPU::sub1) != Replacements[1].asMCReg())
+  if (TRI->getSubReg(Tuple, AMDGPU::sub1) != Sub1Replacement.asMCReg())
     return Register();
   return Tuple;
+}
+
+bool SIPreEmitPeephole::convertToThreeAddressInstr(
+    ThreeAddressCandidate &Cand) {
+  MachineInstr *ThreeAddrsInst =
+      TII->convertToThreeAddress(*Cand.TwoAddrMI, nullptr, nullptr);
+  if (!ThreeAddrsInst)
+    return false;
+  MachineOperand &NewDst = ThreeAddrsInst->getOperand(0);
+  assert(NewDst.isReg());
+
+  // The two asserts are defensive for the case that the implementation of
+  // convertToThreeAddress changes in a manner incompatible with this peephole.
+  const TargetRegisterClass *DstRC =
+      TII->getRegClass(ThreeAddrsInst->getDesc(), NewDst.getOperandNo());
+  assert((!DstRC || DstRC->contains(Cand.NewDst.asMCReg())) &&
+         "candidate prechecks should guarantee a legal destination class");
+
+  auto RegistersOverlap = [&](MachineOperand &MO) {
+    if (!MO.isReg())
+      return false;
+    return TRI->regsOverlap(Cand.NewDst, MO.getReg());
+  };
+  assert((!NewDst.isEarlyClobber() ||
+          llvm::none_of(ThreeAddrsInst->uses(), RegistersOverlap)) &&
+         "three-address instruction must not early-clobber the new destination "
+         "register");
+
+  NewDst.setReg(Cand.NewDst);
+  NewDst.setIsRenamable(false);
+  Cand.TwoAddrMI->eraseFromParent();
+  llvm::for_each(Cand.CopiesToRemove,
+                 [](MachineInstr *Copy) { Copy->eraseFromParent(); });
+  return true;
 }
 
 PreservedAnalyses
@@ -948,9 +1035,7 @@ bool SIPreEmitPeephole::run(MachineFunction &MF, MachineLoopInfo *LoopInfo,
       if (MI.isBundle())
         continue;
 
-      unsigned Opc = MI.getOpcode();
-      if (Opc != AMDGPU::V_FMAC_F64_e64 && Opc != AMDGPU::V_FMAC_F32_e64 &&
-          Opc != AMDGPU::V_FMAC_F64_e32 && Opc != AMDGPU::V_FMAC_F32_e32)
+      if (!isLateThreeAddrPeepholeCandidate(MI))
         continue;
 
       SmallVector<MachineInstr *, 2> Copies;
@@ -958,28 +1043,8 @@ bool SIPreEmitPeephole::run(MachineFunction &MF, MachineLoopInfo *LoopInfo,
         Candidates.emplace_back(MI, Dst, Copies);
     }
 
-    for (ThreeAddressCandidate &Cand : Candidates) {
-      MachineInstr *ThreeAddrsInst =
-          TII->convertToThreeAddress(*Cand.TwoAddrMI, nullptr, nullptr);
-      if (!ThreeAddrsInst)
-        continue;
-      MachineOperand &NewDst = ThreeAddrsInst->getOperand(0);
-      assert(NewDst.isReg());
-
-      const TargetRegisterClass *DstRC =
-          TII->getRegClass(ThreeAddrsInst->getDesc(), NewDst.getOperandNo());
-      if (DstRC && !DstRC->contains(Cand.NewDst.asMCReg())) {
-        ThreeAddrsInst->eraseFromParent();
-        continue;
-      }
-
-      NewDst.setReg(Cand.NewDst);
-      NewDst.setIsRenamable(false);
-      Cand.TwoAddrMI->eraseFromParent();
-      llvm::for_each(Cand.CopiesToRemove,
-                     [](MachineInstr *Copy) { Copy->eraseFromParent(); });
-      Changed = true;
-    }
+    for (ThreeAddressCandidate &Cand : Candidates)
+      Changed |= convertToThreeAddressInstr(Cand);
 
     if (!ST.hasVGPRIndexMode())
       continue;
