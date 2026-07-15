@@ -96,13 +96,19 @@ private:
                           ArrayRef<MachineInstr *> Copies)
         : TwoAddrMI(&TwoAddrMI), NewDst(NewDst), CopiesToRemove(Copies) {}
   };
+
   // Return true if MI is a candidate for late conversion to a three-address
   // instruction to avoid copies.
   bool isLateThreeAddrPeepholeCandidate(const MachineInstr &MI) const;
-  // Check if MaybeCopy is a simple copy of Src. If it is a supported
-  // copy, return the destination register of the copy.
+
+  // Check if MaybeCopy is a simple copy of Src. If NewDstRC is non-null, also
+  // require the copy destination to belong to that register class. The class
+  // check is omitted for copies of individual subregisters; their reconstructed
+  // super-register is checked against the destination class by the caller.
+  // Return the destination register of a supported copy.
   Register checkCopy(MachineInstr &TwoAddress, MachineInstr &MaybeCopy,
                      Register Src, const TargetRegisterClass *NewDstRC);
+
   // Check whether the two-address instruction should be replaced with a
   // three-address instruction to avoid copies of the output registers. If the
   // replacement should take place, returns the destination register for the
@@ -804,13 +810,13 @@ MachineInstrBuilder SIPreEmitPeephole::createUnpackedMI(MachineInstr &I,
 
 bool SIPreEmitPeephole::isLateThreeAddrPeepholeCandidate(
     const MachineInstr &MI) const {
-  // This is a subset of the opcodes that are convertible to three-address
-  // instructions according to . This is intended. For some cases,
-  // convertToThreeAddress could early-clobber, which would require us to roll
-  // back the transformation. However, rollback is not side-effect free for some
-  // cases in convertToThreeAddress that fold immediates. Therefore, we limit
-  // this peephole to only the instructions for which rollback will not be
-  // necessary.
+  // This is only a subset of the opcodes that are convertible to three-address
+  // instructions according to MachineInstr::isConvertibleTo3Addr. This is
+  // intended. For some cases, convertToThreeAddress could early-clobber, which
+  // would require us to roll back the transformation. However, rollback is not
+  // side-effect free for some cases in convertToThreeAddress that fold
+  // immediates. Therefore, we limit this peephole to only the instructions for
+  // which rollback will not be necessary.
   switch (MI.getOpcode()) {
   case AMDGPU::V_MAC_F16_e32:
   case AMDGPU::V_MAC_F16_e64:
@@ -847,12 +853,13 @@ Register SIPreEmitPeephole::checkCopy(MachineInstr &TwoAddress,
   if (TII->hasAnyModifiersSet(MaybeCopy))
     return Register();
 
-  auto CopySrc = MaybeCopy.getOperand(TII->getFoldableCopySrcIdx(MaybeCopy));
+  MachineOperand &CopySrc =
+      MaybeCopy.getOperand(TII->getFoldableCopySrcIdx(MaybeCopy));
   if (!CopySrc.isReg() || CopySrc.getReg() != Src ||
       CopySrc.getSubReg() != AMDGPU::NoSubRegister)
     return Register();
 
-  MachineOperand Dst = MaybeCopy.getOperand(0);
+  MachineOperand &Dst = MaybeCopy.getOperand(0);
   if (!Dst.isReg() || Dst.getSubReg() != AMDGPU::NoSubRegister)
     return Register();
 
@@ -860,18 +867,18 @@ Register SIPreEmitPeephole::checkCopy(MachineInstr &TwoAddress,
   if (TRI->getPhysRegBaseClass(DstReg) != TRI->getPhysRegBaseClass(Src))
     return Register();
 
-  if (NewDstRC && !NewDstRC->contains(DstReg.asMCReg()))
+  if (NewDstRC && !NewDstRC->contains(DstReg))
     return Register();
 
   // Check that it is safe to define the copy destination register at the
   // current position of the two-address instruction.
-  SmallPtrSet<MachineInstr *, 1> Ignore{&TwoAddress, &MaybeCopy};
+  SmallPtrSet<MachineInstr *, 2> Ignore{&TwoAddress, &MaybeCopy};
   if (!RDI->isSafeToDefRegAt(&TwoAddress, DstReg, Ignore))
     return Register();
 
   // Check that the two-address instruction and the copy have the same exec
   // mask.
-  if (!RDI->hasSameReachingDef(&TwoAddress, &MaybeCopy, AMDGPU::EXEC))
+  if (!RDI->hasSameReachingDef(&TwoAddress, &MaybeCopy, TRI->getExec()))
     return Register();
 
   return DstReg;
@@ -920,9 +927,9 @@ Register SIPreEmitPeephole::shouldReplaceWithThreeAddress(
   if (!Sub0 || !Sub1)
     return Register();
 
-  auto Sub0Replacment = CheckRegisterCopies(Sub0, nullptr);
-  auto Sub1Replacement = CheckRegisterCopies(Sub1, nullptr);
-  if (!Sub0Replacment || !Sub1Replacement)
+  Register Sub0Replacement = CheckRegisterCopies(Sub0, nullptr);
+  Register Sub1Replacement = CheckRegisterCopies(Sub1, nullptr);
+  if (!Sub0Replacement || !Sub1Replacement)
     return Register();
 
   // Try to identify a matching super-register/tuple for the f64 case and abort
@@ -930,11 +937,11 @@ Register SIPreEmitPeephole::shouldReplaceWithThreeAddress(
   if (!NewDstRC)
     return Register();
   Register Tuple =
-      TRI->getMatchingSuperReg(Sub0Replacment, AMDGPU::sub0, NewDstRC);
+      TRI->getMatchingSuperReg(Sub0Replacement, AMDGPU::sub0, NewDstRC);
   if (!Tuple)
     return Register();
 
-  if (TRI->getSubReg(Tuple, AMDGPU::sub1) != Sub1Replacement.asMCReg())
+  if (Register(TRI->getSubReg(Tuple, AMDGPU::sub1)) != Sub1Replacement)
     return Register();
   return Tuple;
 }
@@ -952,7 +959,7 @@ bool SIPreEmitPeephole::convertToThreeAddressInstr(
   // convertToThreeAddress changes in a manner incompatible with this peephole.
   const TargetRegisterClass *DstRC =
       TII->getRegClass(ThreeAddrsInst->getDesc(), NewDst.getOperandNo());
-  assert((!DstRC || DstRC->contains(Cand.NewDst.asMCReg())) &&
+  assert((!DstRC || DstRC->contains(Cand.NewDst)) &&
          "candidate prechecks should guarantee a legal destination class");
 
   auto RegistersOverlap = [&](MachineOperand &MO) {
@@ -1031,7 +1038,7 @@ bool SIPreEmitPeephole::run(MachineFunction &MF, MachineLoopInfo *LoopInfo,
     SmallVector<ThreeAddressCandidate> Candidates;
     // First, collect the candidates. We can't perform the transformation right
     // away, it would invalidate the iterator.
-    for (auto &MI : make_early_inc_range(MBB.instrs())) {
+    for (MachineInstr &MI : MBB.instrs()) {
       if (MI.isBundle())
         continue;
 

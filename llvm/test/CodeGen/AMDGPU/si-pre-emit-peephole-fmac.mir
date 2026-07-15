@@ -49,6 +49,49 @@ body: |
 ...
 
 ---
+name: fmac_f64_e32_return_copy_odd_destination
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $vgpr4, $vgpr5, $vgpr6, $vgpr7, $vgpr8, $vgpr9
+
+    ; The copied halves form an odd-start tuple, which is not in the aligned
+    ; destination register class.
+    ; CHECK-LABEL: name: fmac_f64_e32_return_copy_odd_destination
+    ; CHECK: liveins: $vgpr4, $vgpr5, $vgpr6, $vgpr7, $vgpr8, $vgpr9
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: renamable $vgpr6_vgpr7 = nofpexcept V_FMAC_F64_e32 killed $vgpr4_vgpr5, killed $vgpr8_vgpr9, killed $vgpr6_vgpr7, implicit $mode, implicit $exec
+    ; CHECK-NEXT: $vgpr1 = V_MOV_B32_e32 killed $vgpr6, implicit $exec, implicit $exec
+    ; CHECK-NEXT: $vgpr2 = V_MOV_B32_e32 killed $vgpr7, implicit $exec, implicit $exec
+    ; CHECK-NEXT: SI_RETURN implicit killed $vgpr1, implicit killed $vgpr2
+    renamable $vgpr6_vgpr7 = nofpexcept V_FMAC_F64_e32 killed renamable $vgpr4_vgpr5, killed renamable $vgpr8_vgpr9, killed renamable $vgpr6_vgpr7, implicit $mode, implicit $exec
+    $vgpr1 = V_MOV_B32_e32 killed $vgpr6, implicit $exec, implicit $exec
+    $vgpr2 = V_MOV_B32_e32 killed $vgpr7, implicit $exec, implicit $exec
+    SI_RETURN implicit killed $vgpr1, implicit killed $vgpr2
+...
+
+---
+name: fmac_f64_e32_return_copy_non_tuple
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $vgpr4, $vgpr5, $vgpr6, $vgpr7, $vgpr8, $vgpr9
+
+    ; The copied halves are not subregisters of the same 64-bit tuple.
+    ; CHECK-LABEL: name: fmac_f64_e32_return_copy_non_tuple
+    ; CHECK: liveins: $vgpr4, $vgpr5, $vgpr6, $vgpr7, $vgpr8, $vgpr9
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: renamable $vgpr6_vgpr7 = nofpexcept V_FMAC_F64_e32 killed $vgpr4_vgpr5, killed $vgpr8_vgpr9, killed $vgpr6_vgpr7, implicit $mode, implicit $exec
+    ; CHECK-NEXT: $vgpr1 = V_MOV_B32_e32 killed $vgpr6, implicit $exec, implicit $exec
+    ; CHECK-NEXT: $vgpr3 = V_MOV_B32_e32 killed $vgpr7, implicit $exec, implicit $exec
+    ; CHECK-NEXT: SI_RETURN implicit killed $vgpr1, implicit killed $vgpr3
+    renamable $vgpr6_vgpr7 = nofpexcept V_FMAC_F64_e32 killed renamable $vgpr4_vgpr5, killed renamable $vgpr8_vgpr9, killed renamable $vgpr6_vgpr7, implicit $mode, implicit $exec
+    $vgpr1 = V_MOV_B32_e32 killed $vgpr6, implicit $exec, implicit $exec
+    $vgpr3 = V_MOV_B32_e32 killed $vgpr7, implicit $exec, implicit $exec
+    SI_RETURN implicit killed $vgpr1, implicit killed $vgpr3
+...
+
+---
 name: fmac_f32_e32_return_copy
 tracksRegLiveness: true
 body: |
