@@ -193,7 +193,7 @@ void llvm::constrainSelectedInstRegOperands(MachineInstr &I,
     // Tie uses to defs as indicated in MCInstrDesc if this hasn't already been
     // done.
     if (MO.isUse()) {
-      int DefIdx = I.getDesc().getOperandConstraint(OpI, MCOI::TIED_TO);
+      int DefIdx = I.getExpectedTiedDefIdx(OpI);
       if (DefIdx != -1 && !I.isRegTiedToUseOperand(DefIdx))
         I.tieOperands(DefIdx, OpI);
     }

@@ -34,7 +34,8 @@ namespace MCOI {
 /// corresponding high-order hex digit specifying the constraint value.
 /// This allows for a maximum of 3 constraints.
 enum OperandConstraint {
-  TIED_TO = 0,  // Must be allocated the same register as specified value.
+  TIED_TO = 0,  // Must be allocated the same register as specified value,
+                // unless the operand is marked TiedMayBeDisjoint.
   EARLY_CLOBBER // If present, operand is an early clobber register.
 };
 
@@ -52,7 +53,8 @@ enum OperandFlags {
   LookupRegClassByHwMode = 0,
   Predicate,
   OptionalDef,
-  BranchTarget
+  BranchTarget,
+  TiedMayBeDisjoint
 };
 
 /// Operands are tagged with one of the values of this enum.
@@ -117,6 +119,13 @@ public:
 
   /// Set if this operand is a branch target.
   bool isBranchTarget() const { return Flags & (1 << MCOI::BranchTarget); }
+
+  /// Set on a use with a TIED_TO constraint if the instruction is also valid
+  /// with the use and its tied def in completely disjoint registers. In that
+  /// form the operands are untied and the def is early-clobber.
+  bool isTiedMayBeDisjoint() const {
+    return Flags & (1 << MCOI::TiedMayBeDisjoint);
+  }
 
   bool isGenericType() const {
     return OperandType >= MCOI::OPERAND_FIRST_GENERIC &&

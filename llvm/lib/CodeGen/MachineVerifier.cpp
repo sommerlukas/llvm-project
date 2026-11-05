@@ -341,6 +341,9 @@ struct MachineVerifier {
 
   void verifyInlineAsm(const MachineInstr *MI);
 
+  void verifyUntiedDisjointTiedOperand(const MachineOperand *MO, unsigned MONum,
+                                       unsigned DefIdx);
+
   void checkLiveness(const MachineOperand *MO, unsigned MONum);
   void checkLivenessAtUse(const MachineOperand *MO, unsigned MONum,
                           SlotIndex UseIdx, const LiveRange &LR,
@@ -2622,6 +2625,43 @@ void MachineVerifier::visitMachineInstrBefore(const MachineInstr *MI) {
   }
 }
 
+/// Returns true if register operands \p A and \p B overlap without being
+/// identical. Different virtual registers are never considered overlapping.
+static bool partiallyOverlap(const MachineOperand &A, const MachineOperand &B,
+                             const TargetRegisterInfo &TRI,
+                             const MachineRegisterInfo &MRI) {
+  Register RegA = A.getReg();
+  Register RegB = B.getReg();
+  if (RegA.isPhysical() && RegB.isPhysical())
+    return RegA != RegB && TRI.regsOverlap(RegA, RegB);
+  if (!RegA.isVirtual() || RegA != RegB)
+    return false;
+
+  auto GetLanes = [&](const MachineOperand &MO) {
+    return MO.getSubReg() ? TRI.getSubRegIndexLaneMask(MO.getSubReg())
+                          : MRI.getMaxLaneMaskForVReg(MO.getReg());
+  };
+  LaneBitmask LanesA = GetLanes(A);
+  LaneBitmask LanesB = GetLanes(B);
+  return LanesA != LanesB && (LanesA & LanesB).any();
+}
+
+void MachineVerifier::verifyUntiedDisjointTiedOperand(const MachineOperand *MO,
+                                                      unsigned MONum,
+                                                      unsigned DefIdx) {
+  const MachineOperand &DefMO = MO->getParent()->getOperand(DefIdx);
+  if (!DefMO.isReg()) {
+    report("TiedMayBeDisjoint def must be a register", &DefMO, DefIdx);
+    return;
+  }
+  if (!DefMO.isEarlyClobber())
+    report("Untied TiedMayBeDisjoint operand requires an early-clobber def", MO,
+           MONum);
+  if (partiallyOverlap(*MO, DefMO, *TRI, *MRI))
+    report("Untied TiedMayBeDisjoint operands must not partially overlap", MO,
+           MONum);
+}
+
 void
 MachineVerifier::visitMachineOperand(const MachineOperand *MO, unsigned MONum) {
   const MachineInstr *MI = MO->getParent();
@@ -2666,8 +2706,11 @@ MachineVerifier::visitMachineOperand(const MachineOperand *MO, unsigned MONum) {
 
     int TiedTo = MCID.getOperandConstraint(MONum, MCOI::TIED_TO);
     if (TiedTo != -1) {
-      if (!MO->isReg())
-        report("Tied use must be a register", MO, MONum);
+      if (!MO->isReg()) {
+        if (!MCOI.isTiedMayBeDisjoint())
+          report("Tied use must be a register", MO, MONum);
+      } else if (MCOI.isTiedMayBeDisjoint() && !MO->isTied())
+        verifyUntiedDisjointTiedOperand(MO, MONum, TiedTo);
       else if (!MO->isTied())
         report("Operand should be tied", MO, MONum);
       else if (unsigned(TiedTo) != MI->findTiedOperandIdx(MONum))
@@ -2679,6 +2722,14 @@ MachineVerifier::visitMachineOperand(const MachineOperand *MO, unsigned MONum) {
         else if (MOTied.getReg().isPhysical() &&
                  MO->getReg() != MOTied.getReg())
           report("Tied physical registers must match.", &MOTied, TiedTo);
+      }
+      if (MCOI.isTiedMayBeDisjoint() && MO->isReg() && MO->isTied()) {
+        const MachineOperand &DefMO =
+            MI->getOperand(MI->findTiedOperandIdx(MONum));
+        if (DefMO.isReg() && DefMO.isEarlyClobber())
+          report("Tied def of a TiedMayBeDisjoint operand must not be "
+                 "early-clobber",
+                 MO, MONum);
       }
     } else if (MO->isReg() && MO->isTied())
       report("Explicit operand should not be tied", MO, MONum);

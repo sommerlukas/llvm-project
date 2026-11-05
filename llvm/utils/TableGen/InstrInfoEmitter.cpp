@@ -207,6 +207,8 @@ InstrInfoEmitter::GetOperandInfo(const CodeGenInstruction &Inst) {
       // operand was of type BranchTargetOperand.
       if (Op.Rec->isSubClassOf("BranchTargetOperand"))
         Res += "|(1<<MCOI::BranchTarget)";
+      if (Constraint.isTiedMayBeDisjoint())
+        Res += "|(1<<MCOI::TiedMayBeDisjoint)";
 
       // Fill in operand type.
       Res += ", ";

@@ -728,7 +728,7 @@ class Instruction : InstructionEncoding {
   // Scheduling information from TargetSchedule.td.
   list<SchedReadWrite> SchedRW;
 
-  /// Support for operand constraints. There are currently two kinds:
+  /// Support for operand constraints:
   /// "$src = $dst"
   ///   Ensures that the operands are allocated to the same register.
   ///
@@ -736,8 +736,14 @@ class Instruction : InstructionEncoding {
   ///   Ensures that LLVM will not use the same register for any inputs (other
   ///   than an input tied to this output).
   ///
+  /// "@tied_may_be_disjoint $rs"
+  ///   Must follow a tie on $rs. Allows the tied def and $rs to be either
+  ///   identical or completely disjoint. The disjoint form leaves them untied and
+  ///   marks the def early-clobber. Only valid on codegen-only instructions.
+  ///
   /// See also:
   /// - MC/MCInstrDesc.h:OperandConstraint::{TIED_TO, EARLY_CLOBBER}.
+  /// - MCOI::OperandFlags::TiedMayBeDisjoint.
   /// - CodeGen/MachineOperand.h:MachineOperand::{TiedTo, IsEarlyClobber}.
   /// - The LLVM IR specification: Section `Output constraints` in the
   ///   discussion of inline assembly constraint strings.

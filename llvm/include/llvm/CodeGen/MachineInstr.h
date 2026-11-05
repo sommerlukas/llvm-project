@@ -1686,6 +1686,18 @@ public:
                               const TargetInstrInfo *TII,
                               const TargetRegisterInfo *TRI) const;
 
+  /// Return true if the descriptor allows the tie on \p UseOpIdx to be replaced
+  /// by an untied, completely disjoint pair with an early-clobber def.
+  bool isTiedMayBeDisjoint(unsigned UseOpIdx) const {
+    const MCInstrDesc &MCID = getDesc();
+    return UseOpIdx < MCID.getNumOperands() &&
+           MCID.operands()[UseOpIdx].isTiedMayBeDisjoint();
+  }
+
+  /// Return the def tied to \p UseOpIdx by the descriptor, or -1. A relaxable
+  /// tie has no expected tie when its def is early-clobber.
+  LLVM_ABI int getExpectedTiedDefIdx(unsigned UseOpIdx) const;
+
   /// Add a tie between the register operands at DefIdx and UseIdx.
   /// The tie will cause the register allocator to ensure that the two
   /// operands are assigned the same physical register.

@@ -275,7 +275,7 @@ void MachineInstr::addOperand(MachineFunction &MF, const MachineOperand &Op) {
     if (!isImpReg) {
       // Tie uses to defs as indicated in MCInstrDesc.
       if (NewMO->isUse()) {
-        int DefIdx = MCID->getOperandConstraint(OpNo, MCOI::TIED_TO);
+        int DefIdx = getExpectedTiedDefIdx(OpNo);
         if (DefIdx != -1)
           tieOperands(DefIdx, OpNo);
       }
@@ -1736,6 +1736,19 @@ void MachineInstr::copyImplicitOps(MachineFunction &MF,
       addOperand(MF, MO);
 }
 
+int MachineInstr::getExpectedTiedDefIdx(unsigned UseOpIdx) const {
+  const MCInstrDesc &MCID = getDesc();
+  int DefIdx = MCID.getOperandConstraint(UseOpIdx, MCOI::TIED_TO);
+  if (DefIdx == -1 || !isTiedMayBeDisjoint(UseOpIdx))
+    return DefIdx;
+  if (unsigned(DefIdx) < getNumOperands()) {
+    const MachineOperand &DefMO = getOperand(DefIdx);
+    if (DefMO.isReg() && DefMO.isEarlyClobber())
+      return -1;
+  }
+  return DefIdx;
+}
+
 bool MachineInstr::hasComplexRegisterTies() const {
   const MCInstrDesc &MCID = getDesc();
   if (MCID.Opcode == TargetOpcode::STATEPOINT)
@@ -1745,7 +1758,7 @@ bool MachineInstr::hasComplexRegisterTies() const {
     if (!Operand.isReg() || Operand.isDef())
       // Ignore the defined registers as MCID marks only the uses as tied.
       continue;
-    int ExpectedTiedIdx = MCID.getOperandConstraint(I, MCOI::TIED_TO);
+    int ExpectedTiedIdx = getExpectedTiedDefIdx(I);
     int TiedIdx = Operand.isTied() ? int(findTiedOperandIdx(I)) : -1;
     if (ExpectedTiedIdx != TiedIdx)
       return true;
