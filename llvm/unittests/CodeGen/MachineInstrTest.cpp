@@ -108,6 +108,42 @@ TEST(IsIdenticalToTest, DifferentDefs) {
   ASSERT_FALSE(MI4->isIdenticalTo(*MI3, MachineInstr::IgnoreVRegDefs));
 }
 
+TEST(MachineInstrTest, TiedMayBeDisjointConstruction) {
+  LLVMContext Ctx;
+  Module Mod("Module", Ctx);
+  auto MF = createMachineFunction(Ctx, Mod);
+
+  struct {
+    MCInstrDesc MCID;
+    MCOperandInfo OpInfo[2];
+  } Table = {{0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0},
+             {{0, 0, MCOI::OPERAND_REGISTER, 0},
+              {0, 1 << MCOI::TiedMayBeDisjoint, MCOI::OPERAND_REGISTER,
+               MCOI_TIED_TO(0)}}};
+
+  Register DefReg = Register::index2VirtReg(0);
+  Register UseReg = Register::index2VirtReg(1);
+  auto TiedMI = MF->CreateMachineInstr(Table.MCID, DebugLoc());
+  TiedMI->addOperand(*MF, MachineOperand::CreateReg(DefReg, /*isDef=*/true));
+  TiedMI->addOperand(*MF, MachineOperand::CreateReg(UseReg, /*isDef=*/false));
+  ASSERT_TRUE(TiedMI->getOperand(1).isTied());
+  ASSERT_EQ(TiedMI->findTiedOperandIdx(1), 0u);
+  ASSERT_EQ(TiedMI->getExpectedTiedDefIdx(1), 0);
+  ASSERT_TRUE(TiedMI->isTiedMayBeDisjoint(1));
+  ASSERT_FALSE(TiedMI->hasComplexRegisterTies());
+
+  auto DisjointMI = MF->CreateMachineInstr(Table.MCID, DebugLoc());
+  DisjointMI->addOperand(*MF, MachineOperand::CreateReg(
+                                  DefReg, /*isDef=*/true, /*isImp=*/false,
+                                  /*isKill=*/false, /*isDead=*/false,
+                                  /*isUndef=*/false, /*isEarlyClobber=*/true));
+  DisjointMI->addOperand(*MF,
+                         MachineOperand::CreateReg(UseReg, /*isDef=*/false));
+  ASSERT_FALSE(DisjointMI->getOperand(1).isTied());
+  ASSERT_FALSE(DisjointMI->hasComplexRegisterTies());
+  ASSERT_EQ(DisjointMI->getExpectedTiedDefIdx(1), -1);
+}
+
 // Check that MachineInstrExpressionTrait::isEqual is symmetric and in sync with
 // MachineInstrExpressionTrait::getHashValue
 void checkHashAndIsEqualMatch(MachineInstr *MI1, MachineInstr *MI2) {

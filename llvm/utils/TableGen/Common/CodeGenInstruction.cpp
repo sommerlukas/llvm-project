@@ -297,21 +297,28 @@ CGIOperandList::parseOperandName(StringRef Op, bool AllowWholeOp) const {
   return {0U, 0U};
 }
 
+static std::pair<unsigned, unsigned>
+ParseConstraintOperand(StringRef CStr, StringRef Keyword, CGIOperandList &Ops,
+                       const Record *Rec, StringRef &Name) {
+  Name = CStr.substr(Keyword.size()).ltrim(" \t");
+  if (Name.empty())
+    PrintFatalError(Rec->getLoc(), "Illegal format for " + Keyword +
+                                       " constraint in '" + Rec->getName() +
+                                       "': '" + CStr + "'");
+  return Ops.parseOperandName(Name, false);
+}
+
 static void ParseConstraint(StringRef CStr, CGIOperandList &Ops,
                             const Record *Rec) {
+  CStr = CStr.trim(" \t");
   // EARLY_CLOBBER: @early $reg
   StringRef::size_type wpos = CStr.find_first_of(" \t");
   StringRef::size_type start = CStr.find_first_not_of(" \t");
   StringRef Tok = CStr.substr(start, wpos - start);
   if (Tok == "@earlyclobber") {
-    StringRef Name = CStr.substr(wpos + 1);
-    wpos = Name.find_first_not_of(" \t");
-    if (wpos == StringRef::npos)
-      PrintFatalError(Rec->getLoc(),
-                      "Illegal format for @earlyclobber constraint in '" +
-                          Rec->getName() + "': '" + CStr + "'");
-    Name = Name.substr(wpos);
-    std::pair<unsigned, unsigned> Op = Ops.parseOperandName(Name, false);
+    StringRef Name;
+    std::pair<unsigned, unsigned> Op =
+        ParseConstraintOperand(CStr, Tok, Ops, Rec, Name);
 
     // Build the string for the operand
     if (!Ops[Op.first].Constraints[Op.second].isNone())
@@ -323,7 +330,26 @@ static void ParseConstraint(StringRef CStr, CGIOperandList &Ops,
     return;
   }
 
-  // Only other constraint is "TIED_TO" for now.
+  if (Tok == "@tied_may_be_disjoint") {
+    StringRef Name;
+    std::pair<unsigned, unsigned> Op =
+        ParseConstraintOperand(CStr, Tok, Ops, Rec, Name);
+    auto &Constraint = Ops[Op.first].Constraints[Op.second];
+    if (!Constraint.isTied())
+      PrintFatalError(Rec->getLoc(),
+                      "'@tied_may_be_disjoint' requires a preceding tied "
+                      "constraint on operand '" +
+                          Name + "' in '" + Rec->getName() + "'");
+    if (Constraint.isTiedMayBeDisjoint())
+      PrintFatalError(
+          Rec->getLoc(),
+          "Operand '" + Name + "' of '" + Rec->getName() +
+              "' has multiple '@tied_may_be_disjoint' constraints!");
+    Constraint.setMayBeDisjoint();
+    return;
+  }
+
+  // TIED_TO constraint.
   StringRef::size_type pos = CStr.find_first_of('=');
   if (pos == StringRef::npos || pos == 0 ||
       CStr.find_first_of(" \t", pos) != (pos + 1) ||
@@ -478,6 +504,25 @@ CodeGenInstruction::CodeGenInstruction(const Record *R)
 
   // Parse Constraints.
   ParseConstraints(R->getValueAsString("Constraints"), Operands, R);
+  for (const CGIOperandList::OperandInfo &Op : Operands) {
+    for (const CGIOperandList::ConstraintInfo &Constraint : Op.Constraints) {
+      if (!Constraint.isTiedMayBeDisjoint())
+        continue;
+      if (!isCodeGenOnly)
+        PrintFatalError(R->getLoc(),
+                        "'@tied_may_be_disjoint' is only supported on "
+                        "codegen-only instructions");
+      // An early-clobber def marks the disjoint form, so the tied form cannot
+      // be early-clobber.
+      auto [DefOp, DefSubOp] =
+          Operands.getSubOperandNumber(Constraint.getTiedOperand());
+      if (Operands[DefOp].Constraints[DefSubOp].isEarlyClobber())
+        PrintFatalError(R->getLoc(), "Operand '$" + Operands[DefOp].Name +
+                                         "' of '" + R->getName() +
+                                         "' cannot be early-clobber with "
+                                         "'@tied_may_be_disjoint'");
+    }
+  }
 
   // First check for a ComplexDeprecationPredicate.
   if (R->getValue("ComplexDeprecationPredicate")) {

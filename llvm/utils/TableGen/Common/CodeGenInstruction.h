@@ -31,6 +31,7 @@ public:
   class ConstraintInfo {
     enum { None, EarlyClobber, Tied } Kind = None;
     unsigned OtherTiedOperand = 0;
+    bool MayBeDisjoint = false;
 
   public:
     ConstraintInfo() = default;
@@ -53,12 +54,19 @@ public:
     bool isEarlyClobber() const { return Kind == EarlyClobber; }
     bool isTied() const { return Kind == Tied; }
 
+    void setMayBeDisjoint() {
+      assert(isTied());
+      MayBeDisjoint = true;
+    }
+    bool isTiedMayBeDisjoint() const { return isTied() && MayBeDisjoint; }
+
     unsigned getTiedOperand() const {
       assert(isTied());
       return OtherTiedOperand;
     }
 
     bool operator==(const ConstraintInfo &RHS) const {
+      // Intentionally ignore MayBeDisjoint when checking duplicate tie targets.
       if (Kind != RHS.Kind)
         return false;
       if (Kind == Tied && OtherTiedOperand != RHS.OtherTiedOperand)
