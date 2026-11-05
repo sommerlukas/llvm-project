@@ -736,15 +736,10 @@ bool SIFoldOperandsImpl::updateOperand(FoldCandidate &Fold) const {
 
   if (ImmVal) {
     if (Old.isTied()) {
-      int NewMFMAOpc = AMDGPU::getMFMAEarlyClobberOp(MI->getOpcode());
-      if (NewMFMAOpc == -1)
+      unsigned UseOpIdx = MI->getOperandNo(&Old);
+      if (!MI->isTiedMayBeDisjoint(UseOpIdx))
         return false;
-      MI->setDesc(TII->get(NewMFMAOpc));
-      MI->untieRegOperand(0);
-      const MCInstrDesc &MCID = MI->getDesc();
-      for (unsigned I = 0; I < MI->getNumDefs(); ++I)
-        if (MCID.getOperandConstraint(I, MCOI::EARLY_CLOBBER) != -1)
-          MI->getOperand(I).setIsEarlyClobber(true);
+      MI->untieRegOperand(UseOpIdx);
     }
 
     // TODO: Should we try to avoid adding this to the candidate list?

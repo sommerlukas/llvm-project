@@ -1,0 +1,38 @@
+# RUN: llc -mtriple=amdgpu9.50 -run-pass=none -verify-machineinstrs -o - %s | FileCheck %s
+# RUN: llc -mtriple=amdgpu9.50 -run-pass=none -verify-machineinstrs -o - %s | llc -mtriple=amdgpu9.50 -x mir -run-pass=none -verify-machineinstrs -o - | FileCheck %s
+
+---
+name: tied
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:vreg_512_align2 = IMPLICIT_DEF
+    %1:vreg_128_align2 = IMPLICIT_DEF
+    ; CHECK-LABEL: name: tied
+    ; CHECK: %2:vreg_512_align2 = V_MFMA_F32_32X32X16_BF16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec{{$}}
+    %2:vreg_512_align2 = V_MFMA_F32_32X32X16_BF16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec
+    S_ENDPGM 0
+...
+---
+name: disjoint
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:vreg_512_align2 = IMPLICIT_DEF
+    %1:vreg_128_align2 = IMPLICIT_DEF
+    ; CHECK-LABEL: name: disjoint
+    ; CHECK: early-clobber %2:vreg_512_align2 = V_MFMA_F32_32X32X16_BF16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec{{$}}
+    early-clobber %2:vreg_512_align2 = V_MFMA_F32_32X32X16_BF16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec
+    S_ENDPGM 0
+...
+---
+name: immediate
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:vreg_128_align2 = IMPLICIT_DEF
+    ; CHECK-LABEL: name: immediate
+    ; CHECK: %1:vreg_512_align2 = V_MFMA_F32_32X32X16_BF16_vgprcd_e64 %0, %0, 0, 0, 0, 0, implicit $mode, implicit $exec{{$}}
+    %1:vreg_512_align2 = V_MFMA_F32_32X32X16_BF16_vgprcd_e64 %0, %0, 0, 0, 0, 0, implicit $mode, implicit $exec
+    S_ENDPGM 0
+...
