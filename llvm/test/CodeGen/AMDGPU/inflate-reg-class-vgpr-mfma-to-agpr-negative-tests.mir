@@ -359,7 +359,7 @@ body:             |
   ; CHECK-NEXT:   successors: %bb.1(0x40000000), %bb.2(0x40000000)
   ; CHECK-NEXT:   liveins: $vcc, $vgpr0_vgpr1
   ; CHECK-NEXT: {{  $}}
-  ; CHECK-NEXT:   early-clobber renamable $vgpr2_vgpr3_vgpr4_vgpr5_vgpr6_vgpr7_vgpr8_vgpr9_vgpr10_vgpr11_vgpr12_vgpr13_vgpr14_vgpr15_vgpr16_vgpr17 = V_MFMA_F32_32X32X8F16_vgprcd_e64 $vgpr0_vgpr1, $vgpr0_vgpr1, undef $vgpr0_vgpr1_vgpr2_vgpr3_vgpr4_vgpr5_vgpr6_vgpr7_vgpr8_vgpr9_vgpr10_vgpr11_vgpr12_vgpr13_vgpr14_vgpr15, 0, 0, 0, implicit $mode, implicit $exec
+  ; CHECK-NEXT:   early-clobber renamable $vgpr2_vgpr3_vgpr4_vgpr5_vgpr6_vgpr7_vgpr8_vgpr9_vgpr10_vgpr11_vgpr12_vgpr13_vgpr14_vgpr15_vgpr16_vgpr17 = V_MFMA_F32_32X32X8F16_vgprcd_e64 $vgpr0_vgpr1, $vgpr0_vgpr1, undef $vgpr240_vgpr241_vgpr242_vgpr243_vgpr244_vgpr245_vgpr246_vgpr247_vgpr248_vgpr249_vgpr250_vgpr251_vgpr252_vgpr253_vgpr254_vgpr255, 0, 0, 0, implicit $mode, implicit $exec
   ; CHECK-NEXT:   S_CBRANCH_VCCNZ %bb.1, implicit $vcc
   ; CHECK-NEXT:   S_BRANCH %bb.2
   ; CHECK-NEXT: {{  $}}
@@ -393,7 +393,7 @@ body:             |
   bb.1:
     liveins: $vcc
 
-    %0:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, undef $vgpr0_vgpr1_vgpr2_vgpr3_vgpr4_vgpr5_vgpr6_vgpr7_vgpr8_vgpr9_vgpr10_vgpr11_vgpr12_vgpr13_vgpr14_vgpr15, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %0:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, undef $vgpr240_vgpr241_vgpr242_vgpr243_vgpr244_vgpr245_vgpr246_vgpr247_vgpr248_vgpr249_vgpr250_vgpr251_vgpr252_vgpr253_vgpr254_vgpr255, 0, 0, 0, implicit $mode, implicit $exec
     S_CBRANCH_VCCNZ %bb.1, implicit $vcc
     S_BRANCH %bb.2
 
@@ -482,9 +482,9 @@ body:             |
 
     undef %0.sub0_sub1:vreg_512_align2 = GLOBAL_LOAD_DWORDX2 undef %2:vreg_64_align2, 0, 0, implicit $exec :: (load (s64), addrspace 1)
     S_NOP 0, implicit-def %6:areg_512_align2, implicit-def %7:areg_512_align2, implicit-def %8:areg_512_align2, implicit-def %9:areg_512_align2
-    %3:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %3:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec
     S_NOP 0, implicit %6, implicit %7, implicit %8, implicit %9
-    %4:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %3, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %4:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %3, 0, 0, 0, implicit $mode, implicit $exec
     S_CBRANCH_VCCNZ %bb.1, implicit $vcc
     S_BRANCH %bb.2
 
@@ -572,9 +572,9 @@ body:             |
     liveins: $vcc
 
     undef %0.sub0_sub1:vreg_512_align2 = GLOBAL_LOAD_DWORDX2 undef %2:vreg_64_align2, 0, 0, implicit $exec :: (load (s64), addrspace 1)
-    %3:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %3:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec
     S_NOP 0, implicit-def %6:areg_512_align2, implicit-def %7:areg_512_align2, implicit-def %8:areg_512_align2, implicit-def %9:areg_512_align2
-    %4:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %3, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %4:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %3, 0, 0, 0, implicit $mode, implicit $exec
     S_NOP 0, implicit %6, implicit %7, implicit %8, implicit %9
     S_CBRANCH_VCCNZ %bb.1, implicit $vcc
     S_BRANCH %bb.2
@@ -685,7 +685,7 @@ body:             |
     S_NOP 0, implicit-def $agpr40_agpr41_agpr42_agpr43_agpr44_agpr45_agpr46_agpr47
     S_NOP 0, implicit-def $agpr48_agpr49_agpr50_agpr51_agpr52_agpr53_agpr54_agpr55
     S_NOP 0, implicit-def $agpr56_agpr57_agpr58_agpr59_agpr60_agpr61_agpr62_agpr63
-    %3:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %3:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec
     S_NOP 0, implicit $agpr0_agpr1_agpr2_agpr3_agpr4_agpr5_agpr6_agpr7
     S_NOP 0, implicit $agpr8_agpr9_agpr10_agpr11_agpr12_agpr13_agpr14_agpr15
     S_NOP 0, implicit $agpr16_agpr17_agpr18_agpr19_agpr20_agpr21_agpr22_agpr23
@@ -694,7 +694,7 @@ body:             |
     S_NOP 0, implicit $agpr40_agpr41_agpr42_agpr43_agpr44_agpr45_agpr46_agpr47
     S_NOP 0, implicit $agpr48_agpr49_agpr50_agpr51_agpr52_agpr53_agpr54_agpr55
     S_NOP 0, implicit $agpr56_agpr57_agpr58_agpr59_agpr60_agpr61_agpr62_agpr63
-    %4:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %3, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %4:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %3, 0, 0, 0, implicit $mode, implicit $exec
     S_CBRANCH_VCCNZ %bb.1, implicit $vcc
     S_BRANCH %bb.2
 
@@ -796,7 +796,7 @@ body:             |
     liveins: $vcc
 
     undef %0.sub0_sub1:vreg_512_align2 = GLOBAL_LOAD_DWORDX2 undef %2:vreg_64_align2, 0, 0, implicit $exec :: (load (s64), addrspace 1)
-    %3:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %3:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %0, 0, 0, 0, implicit $mode, implicit $exec
     S_NOP 0, implicit-def $agpr0_agpr1_agpr2_agpr3_agpr4_agpr5_agpr6_agpr7
     S_NOP 0, implicit-def $agpr8_agpr9_agpr10_agpr11_agpr12_agpr13_agpr14_agpr15
     S_NOP 0, implicit-def $agpr16_agpr17_agpr18_agpr19_agpr20_agpr21_agpr22_agpr23
@@ -805,7 +805,7 @@ body:             |
     S_NOP 0, implicit-def $agpr40_agpr41_agpr42_agpr43_agpr44_agpr45_agpr46_agpr47
     S_NOP 0, implicit-def $agpr48_agpr49_agpr50_agpr51_agpr52_agpr53_agpr54_agpr55
     S_NOP 0, implicit-def $agpr56_agpr57_agpr58_agpr59_agpr60_agpr61_agpr62_agpr63
-    %4:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %3, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %4:vreg_512_align2 = V_MFMA_F32_32X32X8F16_vgprcd_e64 %1, %1, %3, 0, 0, 0, implicit $mode, implicit $exec
     S_NOP 0, implicit $agpr0_agpr1_agpr2_agpr3_agpr4_agpr5_agpr6_agpr7
     S_NOP 0, implicit $agpr8_agpr9_agpr10_agpr11_agpr12_agpr13_agpr14_agpr15
     S_NOP 0, implicit $agpr16_agpr17_agpr18_agpr19_agpr20_agpr21_agpr22_agpr23

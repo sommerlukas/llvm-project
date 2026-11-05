@@ -51,7 +51,7 @@
 # CHECK-NEXT: [[MFMA_USE1]].sub13:vreg_512_align2 = V_MOV_B32_e32 0, implicit $exec
 # CHECK-NEXT: [[MFMA_USE1]].sub14:vreg_512_align2 = V_MOV_B32_e32 0, implicit $exec
 # CHECK-NEXT: [[MFMA_USE1]].sub15:vreg_512_align2 = V_MOV_B32_e32 0, implicit $exec
-# CHECK-NEXT: [[MFMA_USE1]]:vreg_512_align2 = V_MFMA_F32_16X16X1F32_mac_vgprcd_e64 undef %3:vgpr_32, undef %3:vgpr_32, [[MFMA_USE1]], 0, 0, 0, implicit $mode, implicit $exec
+# CHECK-NEXT: [[MFMA_USE1]]:vreg_512_align2 = V_MFMA_F32_16X16X1F32_vgprcd_e64 undef %3:vgpr_32, undef %3:vgpr_32, [[MFMA_USE1]], 0, 0, 0, implicit $mode, implicit $exec
 
 ---
 name:            inflated_reg_class_copy_use_after_free
@@ -88,7 +88,7 @@ body:             |
     %1.sub13:vreg_512_align2 = V_MOV_B32_e32 0, implicit $exec
     %1.sub14:vreg_512_align2 = V_MOV_B32_e32 0, implicit $exec
     %1.sub15:vreg_512_align2 = V_MOV_B32_e32 0, implicit $exec
-    %1:vreg_512_align2 = V_MFMA_F32_16X16X1F32_mac_vgprcd_e64 undef %3:vgpr_32, undef %3:vgpr_32, %1, 0, 0, 0, implicit $mode, implicit $exec
+    %1:vreg_512_align2 = V_MFMA_F32_16X16X1F32_vgprcd_e64 undef %3:vgpr_32, undef %3:vgpr_32, %1, 0, 0, 0, implicit $mode, implicit $exec
     GLOBAL_STORE_DWORDX4_SADDR undef %3:vgpr_32, %1.sub12_sub13_sub14_sub15, undef renamable $sgpr0_sgpr1, 96, 0, implicit $exec :: (store (s128), addrspace 1)
     S_ENDPGM 0
 

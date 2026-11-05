@@ -133,7 +133,7 @@ body:             |
     %4:vgpr_32 = COPY $vgpr16
     %5:vgpr_32 = COPY $vgpr17
     %6:vreg_512_align2 = IMPLICIT_DEF
-    %7:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub0_sub1, %0.sub2_sub3, %6, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %7:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub0_sub1, %0.sub2_sub3, %6, 0, 0, 0, implicit $mode, implicit $exec
     %8:vgpr_32 = V_ADD_U32_e32 4096, %4, implicit $exec
     S_ENDPGM 0, implicit %0, implicit %1, implicit %2, implicit %3, implicit %4, implicit %5, implicit %7, implicit %8
 ...
@@ -195,7 +195,7 @@ body:             |
     %4:vgpr_32 = COPY $vgpr16
     %5:sgpr_128 = IMPLICIT_DEF
     %6:vreg_512_align2 = IMPLICIT_DEF
-    %7:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub0_sub1, %0.sub2_sub3, %6, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %7:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub0_sub1, %0.sub2_sub3, %6, 0, 0, 0, implicit $mode, implicit $exec
     %8:vreg_128_align2 = BUFFER_LOAD_DWORDX4_OFFEN %4, %5, 0, 0, 0, 0, implicit $exec :: (dereferenceable load (s128), align 1, addrspace 8)
     S_ENDPGM 0, implicit %0, implicit %1, implicit %2, implicit %3, implicit %4, implicit %7, implicit %8
 ...
@@ -252,7 +252,7 @@ body:             |
     %3:vreg_128_align2 = COPY $vgpr12_vgpr13_vgpr14_vgpr15
     %4:vgpr_32 = COPY $vgpr16
     %5:vreg_512_align2 = IMPLICIT_DEF
-    %6:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub0_sub1, %0.sub2_sub3, %5, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %6:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub0_sub1, %0.sub2_sub3, %5, 0, 0, 0, implicit $mode, implicit $exec
     %7:vreg_128_align2 = DS_READ_B128_gfx9 %4, 0, 0, implicit $exec :: (load (s128), addrspace 3)
     S_ENDPGM 0, implicit %0, implicit %1, implicit %2, implicit %3, implicit %4, implicit %6, implicit %7
 ...
@@ -409,7 +409,7 @@ body:             |
     %4:vgpr_32 = COPY $vgpr16
     %5:sgpr_128 = IMPLICIT_DEF
     %6:vreg_512_align2 = IMPLICIT_DEF
-    %7:vreg_512_align2 = contract V_MFMA_F32_32X32X2F32_vgprcd_e64 %0.sub0, %0.sub1, %6, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %7:vreg_512_align2 = contract V_MFMA_F32_32X32X2F32_vgprcd_e64 %0.sub0, %0.sub1, %6, 0, 0, 0, implicit $mode, implicit $exec
     %8:vreg_128_align2 = BUFFER_LOAD_DWORDX4_OFFEN %4, %5, 0, 0, 0, 0, implicit $exec :: (dereferenceable load (s128), align 1, addrspace 8)
     S_ENDPGM 0, implicit %0, implicit %1, implicit %2, implicit %3, implicit %4, implicit %7, implicit %8
 ...
@@ -540,18 +540,18 @@ body:             |
     %5:vgpr_32 = V_LSHLREV_B32_e32 2, %2, implicit $exec
     %6:vreg_128_align2 = BUFFER_LOAD_DWORDX4_OFFEN %4, %3, 0, 0, 0, 0, implicit $exec :: (dereferenceable load (s128), align 1, addrspace 8)
     %7:vreg_512_align2 = IMPLICIT_DEF
-    %8:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub0_sub1, %6.sub0_sub1, %7, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %8:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub0_sub1, %6.sub0_sub1, %7, 0, 0, 0, implicit $mode, implicit $exec
     %9:vgpr_32 = V_LSHLREV_B32_e32 2, %4, implicit $exec
     %10:vgpr_32 = V_LSHLREV_B32_e32 4, %2, implicit $exec
     %11:vreg_128_align2 = DS_READ_B128_gfx9 %1, 0, 0, implicit $exec :: (load (s128), addrspace 3)
     DS_WRITE_B128_gfx9 %1, %11, 4096, 0, implicit $exec :: (store (s128), addrspace 3)
     %12:vgpr_32 = V_ADD_U32_e32 %2, %5, implicit $exec
-    %13:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub2_sub3, %6.sub2_sub3, %8, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %13:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub2_sub3, %6.sub2_sub3, %8, 0, 0, 0, implicit $mode, implicit $exec
     %14:vgpr_32 = V_LSHLREV_B32_e32 2, %12, implicit $exec
     %15:vreg_128_align2 = DS_READ_B128_gfx9 %1, 2048, 0, implicit $exec :: (load (s128), addrspace 3)
     DS_WRITE_B128_gfx9 %1, %15, 6144, 0, implicit $exec :: (store (s128), addrspace 3)
     %16:vgpr_32 = V_ADD_U32_e32 8192, %12, implicit $exec
-    %17:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub0_sub1, %0.sub2_sub3, %13, 0, 0, 0, implicit $mode, implicit $exec
+    early-clobber %17:vreg_512_align2 = contract V_MFMA_F32_32X32X8F16_vgprcd_e64 %0.sub0_sub1, %0.sub2_sub3, %13, 0, 0, 0, implicit $mode, implicit $exec
     %18:vreg_128_align2 = DS_READ_B128_gfx9 %1, 4096, 0, implicit $exec :: (load (s128), addrspace 3)
     DS_WRITE_B128_gfx9 %1, %18, 8192, 0, implicit $exec :: (store (s128), addrspace 3)
     %19:vreg_128_align2 = BUFFER_LOAD_DWORDX4_OFFEN %16, %3, 0, 2048, 0, 0, implicit $exec :: (dereferenceable load (s128), align 1, addrspace 8)

@@ -78,6 +78,10 @@ class VOP_Pseudo <string opName, string suffix, VOPProfile P, dag outs, dag ins,
   bit IsDPMACCInstruction = 0;
   VOPProfile Pfl = P;
 
+  // Constraints copied to Real instructions. Codegen-only constraints may
+  // differ from MC constraints.
+  string RealConstraints = Constraints;
+
   string AsmOperands;
 }
 
@@ -224,7 +228,7 @@ class VOP3P_Real<VOP_Pseudo ps, int EncodingFamily, string asm_name = ps.Mnemoni
   VOP3_Real<ps, EncodingFamily, asm_name> {
 
   // The v_wmma pseudos have extra constraints that we do not want to impose on the real instruction.
-  let Constraints        = !if(!eq(!substr(ps.Mnemonic,0,6), "v_wmma"), "", ps.Constraints);
+  let Constraints        = !if(!eq(!substr(ps.Mnemonic,0,6), "v_wmma"), "", ps.RealConstraints);
 }
 
 class VOP3P_Real_Gen<VOP_Pseudo ps, GFXGen Gen, string asm_name = ps.Mnemonic> :
