@@ -28,6 +28,19 @@
 /// and a VGPR_16. If we use the VGPR_16 that corresponds to the lo16 bits of
 /// the VGPR_32, the COPY can be completely eliminated.
 ///
+/// This pass also unties relaxable tied operands whose input is a copy of a
+/// register that stays live after the instruction. Such an instruction can
+/// either overwrite its accumulator in place or write a disjoint result
+/// register. When the source stays live anyway, the disjoint form avoids the
+/// copy that the tied form needs to preserve it:
+///
+///   %t = COPY %src
+///   %t = MFMA ..., %t(tied-def 0)
+///   ... use of %src
+/// =>
+///   early-clobber %t = MFMA ..., %src
+///   ... use of %src
+///
 //===----------------------------------------------------------------------===//
 
 #include "GCNPreRAOptimizations.h"
@@ -66,6 +79,11 @@ private:
   bool processReg(Register Reg);
   void hintTrue16Copy(const MachineInstr &MI);
   bool optimizeBVHStack(MachineInstr &MI);
+  bool isLiveAfter(Register Reg, SlotIndex Idx) const;
+  bool allLanesLiveAfter(Register Reg, SlotIndex CopyIdx, SlotIndex Idx) const;
+  MachineInstr *shouldUntieMAI(const MachineInstr &MAI) const;
+  void untieMAI(MachineInstr &MAI, MachineInstr &Copy);
+  bool relaxMAITies(MachineFunction &MF);
 
 public:
   GCNPreRAOptimizationsImpl(LiveIntervals *LS) : LIS(LS) {}
@@ -306,11 +324,170 @@ bool GCNPreRAOptimizationsImpl::optimizeBVHStack(MachineInstr &MI) {
   return true;
 }
 
+/// Return true if \p Reg is live after the instruction at \p Idx.
+bool GCNPreRAOptimizationsImpl::isLiveAfter(Register Reg, SlotIndex Idx) const {
+  return LIS->getInterval(Reg).Query(Idx).valueOut() != nullptr;
+}
+
+/// Return true if every lane of \p Reg live at \p CopyIdx is still live
+/// after the instruction at \p Idx.
+bool GCNPreRAOptimizationsImpl::allLanesLiveAfter(Register Reg,
+                                                  SlotIndex CopyIdx,
+                                                  SlotIndex Idx) const {
+  for (const LiveInterval::SubRange &SR : LIS->getInterval(Reg).subranges())
+    if (SR.Query(CopyIdx).valueIn() && !SR.Query(Idx).valueOut())
+      return false;
+  return true;
+}
+
+/// Decide whether it is beneficial for register allocation to convert the MFMA
+/// to its untied form. Returns the copy instruction that supplies the tied
+/// operand if the MFMA should be untied or nullptr when the tied form should be
+/// kept.
+MachineInstr *
+GCNPreRAOptimizationsImpl::shouldUntieMAI(const MachineInstr &MAI) const {
+  const MachineOperand *Src2 = TII->getNamedOperand(MAI, AMDGPU::OpName::src2);
+  if (!Src2 || !Src2->isReg() || !Src2->isTied())
+    return nullptr;
+  unsigned UseIdx = MAI.getOperandNo(Src2);
+  if (!MAI.isTiedMayBeDisjoint(UseIdx))
+    return nullptr;
+  const MachineOperand &DefMO = MAI.getOperand(MAI.findTiedOperandIdx(UseIdx));
+  Register TiedReg = Src2->getReg();
+  if (!TiedReg.isVirtual() || Src2->getSubReg() || DefMO.getSubReg())
+    return nullptr;
+  // The tied register must not appear in any other operand.
+  for (const MachineOperand &MO : MAI.operands())
+    if (&MO != Src2 && &MO != &DefMO && MO.isReg() && MO.getReg() == TiedReg)
+      return nullptr;
+
+  // Identify the COPY instruction supplying the tied operand.
+  SlotIndex MIIdx = LIS->getInstructionIndex(MAI);
+  const VNInfo *VNI = LIS->getInterval(TiedReg).Query(MIIdx).valueIn();
+  if (!VNI || VNI->isPHIDef())
+    return nullptr;
+  MachineInstr *Copy = LIS->getInstructionFromIndex(VNI->def);
+  if (!Copy || !Copy->isFullCopy())
+    return nullptr;
+  if (Copy->getParent() != MAI.getParent())
+    return nullptr;
+  Register SrcReg = Copy->getOperand(1).getReg();
+  if (!SrcReg.isVirtual() || SrcReg == TiedReg)
+    return nullptr;
+
+  // If the copy source register isn't used after the MAI, keep the tied form as
+  // the copy source register and the accumulator & result can occupy the same
+  // register.
+  if (!isLiveAfter(SrcReg, MIIdx))
+    return nullptr;
+
+  // If not all lanes of the source register are needed after the MAI, it is
+  // better to keep the tied form. Consider this example:
+  // ```
+  // %1 = COPY %0
+  // %1 = MAI ..., %1
+  // ... = ..., %0.sub1
+  // ```
+  // If %0 is a tuple of N registers, we need N+1 registers with the tied form.
+  //
+  // With the untied form, we get:
+  // ```
+  // %1 = MAI ..., %0
+  // ... = ..., %0.sub1
+  // ```
+  // In this case, because %0 and %1 need to be disjoint register tuples for
+  // MAI, we need 2 * N registers.
+  SlotIndex CopyIdx = LIS->getInstructionIndex(*Copy);
+  if (!allLanesLiveAfter(SrcReg, CopyIdx, MIIdx))
+    return nullptr;
+
+  // If the copy source register is redefined between copy and MAI, keep the
+  // tied form.
+  const LiveInterval &SrcLI = LIS->getInterval(SrcReg);
+  if (SrcLI.Query(CopyIdx).valueIn() != SrcLI.Query(MIIdx).valueIn())
+    return nullptr;
+
+  // If the copy destination register is read between copy and MAI, we can't
+  // remove the copy, keep the tied form.
+  for (auto I = std::next(Copy->getIterator()); &*I != &MAI; ++I)
+    if (!I->isDebugInstr() && I->readsRegister(TiedReg, TRI))
+      return nullptr;
+
+  // If copy source and destination register have different classes, keep the
+  // copy and tied form.
+  const TargetRegisterClass *OpRC = MAI.getRegClassConstraint(UseIdx, TII, TRI);
+  if (OpRC && !TRI->getCommonSubClass(OpRC, MRI->getRegClass(SrcReg)))
+    return nullptr;
+
+  return Copy;
+}
+
+/// Convert the MFMA to its untied form and drop the COPY instruction.
+void GCNPreRAOptimizationsImpl::untieMAI(MachineInstr &MAI,
+                                         MachineInstr &Copy) {
+  MachineOperand &UseMO = *TII->getNamedOperand(MAI, AMDGPU::OpName::src2);
+  unsigned UseIdx = MAI.getOperandNo(&UseMO);
+  MachineOperand &DefMO = MAI.getOperand(MAI.findTiedOperandIdx(UseIdx));
+  Register TiedReg = UseMO.getReg();
+  Register SrcReg = Copy.getOperand(1).getReg();
+  if (const TargetRegisterClass *OpRC =
+          MAI.getRegClassConstraint(UseIdx, TII, TRI)) {
+    [[maybe_unused]] bool Constrained = MRI->constrainRegClass(SrcReg, OpRC);
+    assert(Constrained && "copy source has no common register class");
+  }
+
+  // Update debug instructions between copy and MAI. There can be no non-debug
+  // uses or definitions, otherwise we would have kept the tied form.
+  for (auto I = std::next(Copy.getIterator()); &*I != &MAI; ++I)
+    if (I->isDebugInstr())
+      for (MachineOperand &MO : I->operands())
+        if (MO.isReg() && MO.getReg() == TiedReg)
+          MO.setReg(SrcReg);
+
+  MAI.untieRegOperand(UseIdx);
+  UseMO.setReg(SrcReg);
+  // There is always another use of SrcReg after the MAI, otherwise we would
+  // have kept the tied form, so it cannot be killed here.
+  UseMO.setIsKill(false);
+  DefMO.setIsEarlyClobber(true);
+  LIS->RemoveMachineInstrFromMaps(Copy);
+  Copy.eraseFromParent();
+
+  SmallVector<LiveInterval *, 4> SplitLIs;
+  for (Register Reg : {TiedReg, SrcReg}) {
+    LIS->removeInterval(Reg);
+    LiveInterval &NewLI = LIS->createAndComputeVirtRegInterval(Reg);
+    LIS->splitSeparateComponents(NewLI, SplitLIs);
+  }
+  assert(SplitLIs.empty() && "rewrite split a live interval");
+}
+
+/// Convert MFMAs in the function to their untied form if it benefits register
+/// allocation.
+bool GCNPreRAOptimizationsImpl::relaxMAITies(MachineFunction &MF) {
+  bool Changed = false;
+  for (MachineBasicBlock &MBB : MF) {
+    for (MachineInstr &MI : MBB) {
+      if (!TII->isMAI(MI))
+        continue;
+      if (MachineInstr *Copy = shouldUntieMAI(MI)) {
+        untieMAI(MI, *Copy);
+        Changed = true;
+      }
+    }
+  }
+  return Changed;
+}
+
 bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   TII = ST.getInstrInfo();
   MRI = &MF.getRegInfo();
   TRI = ST.getRegisterInfo();
+
+  bool Changed = false;
+  if (ST.hasMAIInsts())
+    Changed |= relaxMAITies(MF);
 
   // Anti-hints only steer register allocation, so they do not count as a
   // modification of the function.
@@ -319,8 +496,6 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
     AMDGPU::HazardContext HCtx{TII, TRI, MRI, LIS, &ST, &SchedModel};
     AMDGPU::applyAntiHintRules(MF, HCtx);
   }
-
-  bool Changed = false;
 
   for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
     Register Reg = Register::index2VirtReg(I);

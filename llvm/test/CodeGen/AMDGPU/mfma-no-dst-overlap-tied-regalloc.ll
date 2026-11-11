@@ -4,7 +4,6 @@
 ; Two MFMA accumulators carried through a loop, with their old values also
 ; read in the loop. Converting the accumulator ties to early-clobber before
 ; scheduling caused allocation to fail with "ran out of registers".
-
 define amdgpu_kernel void @mfma_loop_tied_accumulators_fit_budget(ptr addrspace(1) %in, ptr addrspace(1) %out, i32 %n) #0 {
 ; CHECK-LABEL: mfma_loop_tied_accumulators_fit_budget:
 ; CHECK:       ; %bb.0: ; %entry
@@ -185,7 +184,421 @@ exit:
   ret void
 }
 
+; The accumulator copies are only partially live after the MFMAs. Untying
+; them after scheduling would need disjoint tuples and runs out of registers.
+define amdgpu_kernel void @mfma_loop_partially_live_accumulators(ptr addrspace(1) %in, ptr addrspace(1) %out, i32 %n) #1 {
+; CHECK-LABEL: mfma_loop_partially_live_accumulators:
+; CHECK:       ; %bb.0: ; %entry
+; CHECK-NEXT:    s_load_dwordx4 s[68:71], s[4:5], 0x0
+; CHECK-NEXT:    s_load_dword s33, s[4:5], 0x10
+; CHECK-NEXT:    v_mov_b32_e32 v3, 0
+; CHECK-NEXT:    v_and_b32_e32 v0, 0x3ff, v0
+; CHECK-NEXT:    v_lshlrev_b32_e32 v2, 2, v0
+; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
+; CHECK-NEXT:    s_load_dwordx16 s[52:67], s[70:71], 0x40
+; CHECK-NEXT:    s_load_dwordx16 s[36:51], s[70:71], 0x0
+; CHECK-NEXT:    s_load_dwordx16 s[16:31], s[70:71], 0xc0
+; CHECK-NEXT:    s_load_dwordx16 s[0:15], s[70:71], 0x80
+; CHECK-NEXT:    v_mov_b32_e32 v1, v3
+; CHECK-NEXT:    scratch_store_dwordx2 off, v[0:1], off offset:532 ; 8-byte Folded Spill
+; CHECK-NEXT:    v_lshl_add_u64 v[0:1], s[68:69], 0, v[2:3]
+; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
+; CHECK-NEXT:    v_mov_b64_e32 v[4:5], s[36:37]
+; CHECK-NEXT:    v_mov_b64_e32 v[6:7], s[38:39]
+; CHECK-NEXT:    v_mov_b64_e32 v[8:9], s[40:41]
+; CHECK-NEXT:    v_mov_b64_e32 v[10:11], s[42:43]
+; CHECK-NEXT:    v_mov_b64_e32 v[12:13], s[44:45]
+; CHECK-NEXT:    v_mov_b64_e32 v[14:15], s[46:47]
+; CHECK-NEXT:    v_mov_b64_e32 v[16:17], s[48:49]
+; CHECK-NEXT:    v_mov_b64_e32 v[18:19], s[50:51]
+; CHECK-NEXT:    v_mov_b64_e32 v[20:21], s[52:53]
+; CHECK-NEXT:    v_mov_b64_e32 v[22:23], s[54:55]
+; CHECK-NEXT:    v_mov_b64_e32 v[24:25], s[56:57]
+; CHECK-NEXT:    v_mov_b64_e32 v[26:27], s[58:59]
+; CHECK-NEXT:    v_mov_b64_e32 v[28:29], s[60:61]
+; CHECK-NEXT:    v_mov_b64_e32 v[30:31], s[62:63]
+; CHECK-NEXT:    v_mov_b64_e32 v[32:33], s[64:65]
+; CHECK-NEXT:    v_mov_b64_e32 v[34:35], s[66:67]
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[4:7], off ; 16-byte Folded Spill
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[8:11], off offset:16 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[12:15], off offset:32 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[16:19], off offset:48 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[20:23], off offset:64 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[24:27], off offset:80 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[28:31], off offset:96 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[32:35], off offset:112 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_mov_b32 s34, 0
+; CHECK-NEXT:    scratch_store_dwordx2 off, v[0:1], off offset:540 ; 8-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx2 off, v[0:1], off offset:512 ; 8-byte Folded Spill
+; CHECK-NEXT:    v_mov_b64_e32 v[0:1], s[0:1]
+; CHECK-NEXT:    v_mov_b64_e32 v[2:3], s[2:3]
+; CHECK-NEXT:    v_mov_b64_e32 v[4:5], s[4:5]
+; CHECK-NEXT:    v_mov_b64_e32 v[6:7], s[6:7]
+; CHECK-NEXT:    v_mov_b64_e32 v[8:9], s[8:9]
+; CHECK-NEXT:    v_mov_b64_e32 v[10:11], s[10:11]
+; CHECK-NEXT:    v_mov_b64_e32 v[12:13], s[12:13]
+; CHECK-NEXT:    v_mov_b64_e32 v[14:15], s[14:15]
+; CHECK-NEXT:    v_mov_b64_e32 v[16:17], s[16:17]
+; CHECK-NEXT:    v_mov_b64_e32 v[18:19], s[18:19]
+; CHECK-NEXT:    v_mov_b64_e32 v[20:21], s[20:21]
+; CHECK-NEXT:    v_mov_b64_e32 v[22:23], s[22:23]
+; CHECK-NEXT:    v_mov_b64_e32 v[24:25], s[24:25]
+; CHECK-NEXT:    v_mov_b64_e32 v[26:27], s[26:27]
+; CHECK-NEXT:    v_mov_b64_e32 v[28:29], s[28:29]
+; CHECK-NEXT:    v_mov_b64_e32 v[30:31], s[30:31]
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[0:3], off offset:256 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[4:7], off offset:272 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[8:11], off offset:288 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[12:15], off offset:304 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[16:19], off offset:320 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[20:23], off offset:336 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[24:27], off offset:352 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[28:31], off offset:368 ; 16-byte Folded Spill
+; CHECK-NEXT:    .p2align 5, , 4
+; CHECK-NEXT:  .LBB1_1: ; %loop
+; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    scratch_load_dwordx2 v[0:1], off, off offset:512 ; 8-byte Folded Reload
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_load_dwordx2 v[2:3], off, off offset:540 ; 8-byte Folded Reload
+; CHECK-NEXT:    s_add_i32 s0, s34, 0x100
+; CHECK-NEXT:    s_ashr_i32 s1, s0, 31
+; CHECK-NEXT:    s_waitcnt vmcnt(1)
+; CHECK-NEXT:    global_load_dword v0, v[0:1], off
+; CHECK-NEXT:    s_waitcnt vmcnt(0)
+; CHECK-NEXT:    scratch_store_dword off, v0, off offset:128 ; 4-byte Folded Spill
+; CHECK-NEXT:    v_lshl_add_u64 v[0:1], s[0:1], 2, v[2:3]
+; CHECK-NEXT:    global_load_dword v0, v[0:1], off
+; CHECK-NEXT:    s_add_i32 s0, s34, 0x200
+; CHECK-NEXT:    s_ashr_i32 s1, s0, 31
+; CHECK-NEXT:    s_waitcnt vmcnt(0)
+; CHECK-NEXT:    scratch_store_dword off, v0, off offset:524 ; 4-byte Folded Spill
+; CHECK-NEXT:    v_lshl_add_u64 v[0:1], s[0:1], 2, v[2:3]
+; CHECK-NEXT:    global_load_dword v0, v[0:1], off
+; CHECK-NEXT:    s_add_i32 s0, s34, 0x300
+; CHECK-NEXT:    s_ashr_i32 s1, s0, 31
+; CHECK-NEXT:    s_add_i32 s34, s34, 1
+; CHECK-NEXT:    s_cmp_lt_i32 s34, s33
+; CHECK-NEXT:    s_waitcnt vmcnt(0)
+; CHECK-NEXT:    scratch_store_dword off, v0, off offset:520 ; 4-byte Folded Spill
+; CHECK-NEXT:    v_lshl_add_u64 v[0:1], s[0:1], 2, v[2:3]
+; CHECK-NEXT:    global_load_dword v0, v[0:1], off
+; CHECK-NEXT:    s_waitcnt vmcnt(0)
+; CHECK-NEXT:    scratch_store_dword off, v0, off offset:528 ; 4-byte Folded Spill
+; CHECK-NEXT:    scratch_load_dwordx4 v[2:5], off, off ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[6:9], off, off offset:16 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[10:13], off, off offset:32 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[14:17], off, off offset:48 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[18:21], off, off offset:64 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[22:25], off, off offset:80 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[26:29], off, off offset:96 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[30:33], off, off offset:112 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dword v0, off, off offset:128 ; 4-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dword v1, off, off offset:524 ; 4-byte Folded Reload
+; CHECK-NEXT:    s_waitcnt vmcnt(0)
+; CHECK-NEXT:    v_mfma_f32_32x32x1_2b_f32 v[2:33], v0, v1, v[2:33]
+; CHECK-NEXT:    s_nop 15
+; CHECK-NEXT:    s_nop 1
+; CHECK-NEXT:    v_mov_b64_e32 v[0:1], v[2:3]
+; CHECK-NEXT:    v_mov_b64_e32 v[2:3], v[4:5]
+; CHECK-NEXT:    v_mov_b64_e32 v[4:5], v[6:7]
+; CHECK-NEXT:    v_mov_b64_e32 v[6:7], v[8:9]
+; CHECK-NEXT:    v_mov_b64_e32 v[8:9], v[10:11]
+; CHECK-NEXT:    v_mov_b64_e32 v[10:11], v[12:13]
+; CHECK-NEXT:    v_mov_b64_e32 v[12:13], v[14:15]
+; CHECK-NEXT:    v_mov_b64_e32 v[14:15], v[16:17]
+; CHECK-NEXT:    v_mov_b64_e32 v[16:17], v[18:19]
+; CHECK-NEXT:    v_mov_b64_e32 v[18:19], v[20:21]
+; CHECK-NEXT:    v_mov_b64_e32 v[20:21], v[22:23]
+; CHECK-NEXT:    v_mov_b64_e32 v[22:23], v[24:25]
+; CHECK-NEXT:    v_mov_b64_e32 v[24:25], v[26:27]
+; CHECK-NEXT:    v_mov_b64_e32 v[26:27], v[28:29]
+; CHECK-NEXT:    v_mov_b64_e32 v[28:29], v[30:31]
+; CHECK-NEXT:    v_mov_b64_e32 v[30:31], v[32:33]
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[0:3], off ; 16-byte Folded Spill
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[4:7], off offset:16 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[8:11], off offset:32 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[12:15], off offset:48 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[16:19], off offset:64 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[20:23], off offset:80 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[24:27], off offset:96 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[28:31], off offset:112 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[0:3], off offset:384 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[4:7], off offset:400 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[8:11], off offset:416 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[12:15], off offset:432 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[16:19], off offset:448 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[20:23], off offset:464 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[24:27], off offset:480 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[28:31], off offset:496 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_load_dword v0, off, off offset:520 ; 4-byte Folded Reload
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_load_dword v1, off, off offset:528 ; 4-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[2:5], off, off offset:384 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[6:9], off, off offset:400 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[10:13], off, off offset:416 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[14:17], off, off offset:432 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[18:21], off, off offset:448 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[22:25], off, off offset:464 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[26:29], off, off offset:480 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[30:33], off, off offset:496 ; 16-byte Folded Reload
+; CHECK-NEXT:    s_waitcnt vmcnt(0)
+; CHECK-NEXT:    v_mfma_f32_32x32x1_2b_f32 v[2:33], v0, v1, v[2:33]
+; CHECK-NEXT:    s_nop 15
+; CHECK-NEXT:    s_nop 1
+; CHECK-NEXT:    v_mov_b64_e32 v[0:1], v[2:3]
+; CHECK-NEXT:    v_mov_b64_e32 v[2:3], v[4:5]
+; CHECK-NEXT:    v_mov_b64_e32 v[4:5], v[6:7]
+; CHECK-NEXT:    v_mov_b64_e32 v[6:7], v[8:9]
+; CHECK-NEXT:    v_mov_b64_e32 v[8:9], v[10:11]
+; CHECK-NEXT:    v_mov_b64_e32 v[10:11], v[12:13]
+; CHECK-NEXT:    v_mov_b64_e32 v[12:13], v[14:15]
+; CHECK-NEXT:    v_mov_b64_e32 v[14:15], v[16:17]
+; CHECK-NEXT:    v_mov_b64_e32 v[16:17], v[18:19]
+; CHECK-NEXT:    v_mov_b64_e32 v[18:19], v[20:21]
+; CHECK-NEXT:    v_mov_b64_e32 v[20:21], v[22:23]
+; CHECK-NEXT:    v_mov_b64_e32 v[22:23], v[24:25]
+; CHECK-NEXT:    v_mov_b64_e32 v[24:25], v[26:27]
+; CHECK-NEXT:    v_mov_b64_e32 v[26:27], v[28:29]
+; CHECK-NEXT:    v_mov_b64_e32 v[28:29], v[30:31]
+; CHECK-NEXT:    v_mov_b64_e32 v[30:31], v[32:33]
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[0:3], off offset:384 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[4:7], off offset:400 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[8:11], off offset:416 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[12:15], off offset:432 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[16:19], off offset:448 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[20:23], off offset:464 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[24:27], off offset:480 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[28:31], off offset:496 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_load_dword v1, off, off offset:128 ; 4-byte Folded Reload
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_load_dword v0, off, off offset:524 ; 4-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[2:5], off, off offset:256 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[6:9], off, off offset:272 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[10:13], off, off offset:288 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[14:17], off, off offset:304 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[18:21], off, off offset:320 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[22:25], off, off offset:336 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[26:29], off, off offset:352 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[30:33], off, off offset:368 ; 16-byte Folded Reload
+; CHECK-NEXT:    s_waitcnt vmcnt(0)
+; CHECK-NEXT:    v_mfma_f32_32x32x1_2b_f32 v[2:33], v1, v0, v[2:33]
+; CHECK-NEXT:    s_nop 15
+; CHECK-NEXT:    s_nop 1
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[2:5], off offset:256 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[6:9], off offset:272 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[10:13], off offset:288 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[14:17], off offset:304 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[18:21], off offset:320 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[22:25], off offset:336 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[26:29], off offset:352 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[30:33], off offset:368 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[2:5], off offset:128 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[6:9], off offset:144 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[10:13], off offset:160 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[14:17], off offset:176 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[18:21], off offset:192 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[22:25], off offset:208 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[26:29], off offset:224 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[30:33], off offset:240 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_load_dword v0, off, off offset:520 ; 4-byte Folded Reload
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_load_dwordx4 v[2:5], off, off offset:128 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[6:9], off, off offset:144 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[10:13], off, off offset:160 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[14:17], off, off offset:176 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[18:21], off, off offset:192 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[22:25], off, off offset:208 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[26:29], off, off offset:224 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[30:33], off, off offset:240 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dword v1, off, off offset:528 ; 4-byte Folded Reload
+; CHECK-NEXT:    s_waitcnt vmcnt(0)
+; CHECK-NEXT:    v_mfma_f32_32x32x1_2b_f32 v[2:33], v0, v1, v[2:33]
+; CHECK-NEXT:    s_nop 15
+; CHECK-NEXT:    s_nop 1
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[2:5], off offset:128 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[6:9], off offset:144 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[10:13], off offset:160 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[14:17], off offset:176 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[18:21], off offset:192 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[22:25], off offset:208 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[26:29], off offset:224 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[30:33], off offset:240 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_load_dwordx2 v[34:35], off, off offset:532 ; 8-byte Folded Reload
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_load_dwordx4 v[0:3], off, off offset:256 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[4:7], off, off offset:272 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[8:11], off, off offset:288 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[12:15], off, off offset:304 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[16:19], off, off offset:320 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[20:23], off, off offset:336 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[24:27], off, off offset:352 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[28:31], off, off offset:368 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[2:5], off, off ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[6:9], off, off offset:16 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[10:13], off, off offset:32 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[14:17], off, off offset:48 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[18:21], off, off offset:64 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[22:25], off, off offset:80 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[26:29], off, off offset:96 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[30:33], off, off offset:112 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx2 v[32:33], off, off offset:512 ; 8-byte Folded Reload
+; CHECK-NEXT:    s_waitcnt vmcnt(8)
+; CHECK-NEXT:    v_max3_f32 v35, v35, v2, v1
+; CHECK-NEXT:    scratch_store_dwordx2 off, v[34:35], off offset:532 ; 8-byte Folded Spill
+; CHECK-NEXT:    s_waitcnt vmcnt(1)
+; CHECK-NEXT:    v_lshl_add_u64 v[32:33], v[32:33], 0, 4
+; CHECK-NEXT:    scratch_store_dwordx2 off, v[32:33], off offset:512 ; 8-byte Folded Spill
+; CHECK-NEXT:    scratch_load_dwordx4 v[32:35], off, off offset:384 ; 16-byte Folded Reload
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_load_dwordx4 v[36:39], off, off offset:400 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[40:43], off, off offset:416 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[44:47], off, off offset:432 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[48:51], off, off offset:448 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[52:55], off, off offset:464 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[56:59], off, off offset:480 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[60:63], off, off offset:496 ; 16-byte Folded Reload
+; CHECK-NEXT:    s_waitcnt vmcnt(0)
+; CHECK-NEXT:    v_mov_b64_e32 v[0:1], v[32:33]
+; CHECK-NEXT:    v_mov_b64_e32 v[2:3], v[34:35]
+; CHECK-NEXT:    v_mov_b64_e32 v[4:5], v[36:37]
+; CHECK-NEXT:    v_mov_b64_e32 v[6:7], v[38:39]
+; CHECK-NEXT:    v_mov_b64_e32 v[8:9], v[40:41]
+; CHECK-NEXT:    v_mov_b64_e32 v[10:11], v[42:43]
+; CHECK-NEXT:    v_mov_b64_e32 v[12:13], v[44:45]
+; CHECK-NEXT:    v_mov_b64_e32 v[14:15], v[46:47]
+; CHECK-NEXT:    v_mov_b64_e32 v[16:17], v[48:49]
+; CHECK-NEXT:    v_mov_b64_e32 v[18:19], v[50:51]
+; CHECK-NEXT:    v_mov_b64_e32 v[20:21], v[52:53]
+; CHECK-NEXT:    v_mov_b64_e32 v[22:23], v[54:55]
+; CHECK-NEXT:    v_mov_b64_e32 v[24:25], v[56:57]
+; CHECK-NEXT:    v_mov_b64_e32 v[26:27], v[58:59]
+; CHECK-NEXT:    v_mov_b64_e32 v[28:29], v[60:61]
+; CHECK-NEXT:    v_mov_b64_e32 v[30:31], v[62:63]
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[32:35], off ; 16-byte Folded Spill
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[36:39], off offset:16 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[40:43], off offset:32 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[44:47], off offset:48 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[48:51], off offset:64 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[52:55], off offset:80 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[56:59], off offset:96 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[60:63], off offset:112 ; 16-byte Folded Spill
+; CHECK-NEXT:    scratch_load_dwordx4 v[32:35], off, off offset:128 ; 16-byte Folded Reload
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_load_dwordx4 v[36:39], off, off offset:144 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[40:43], off, off offset:160 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[44:47], off, off offset:176 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[48:51], off, off offset:192 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[52:55], off, off offset:208 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[56:59], off, off offset:224 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[60:63], off, off offset:240 ; 16-byte Folded Reload
+; CHECK-NEXT:    s_waitcnt vmcnt(7)
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[32:35], off offset:256 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_waitcnt vmcnt(7)
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[36:39], off offset:272 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_waitcnt vmcnt(7)
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[40:43], off offset:288 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_waitcnt vmcnt(7)
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[44:47], off offset:304 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_waitcnt vmcnt(7)
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[48:51], off offset:320 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_waitcnt vmcnt(7)
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[52:55], off offset:336 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_waitcnt vmcnt(7)
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[56:59], off offset:352 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_waitcnt vmcnt(7)
+; CHECK-NEXT:    scratch_store_dwordx4 off, v[60:63], off offset:368 ; 16-byte Folded Spill
+; CHECK-NEXT:    s_cbranch_scc1 .LBB1_1
+; CHECK-NEXT:  ; %bb.2: ; %exit
+; CHECK-NEXT:    v_mov_b32_e32 v32, 0
+; CHECK-NEXT:    global_store_dwordx4 v32, v[0:3], s[70:71]
+; CHECK-NEXT:    global_store_dwordx4 v32, v[28:31], s[70:71] offset:112
+; CHECK-NEXT:    global_store_dwordx4 v32, v[24:27], s[70:71] offset:96
+; CHECK-NEXT:    global_store_dwordx4 v32, v[20:23], s[70:71] offset:80
+; CHECK-NEXT:    global_store_dwordx4 v32, v[16:19], s[70:71] offset:64
+; CHECK-NEXT:    global_store_dwordx4 v32, v[12:15], s[70:71] offset:48
+; CHECK-NEXT:    global_store_dwordx4 v32, v[8:11], s[70:71] offset:32
+; CHECK-NEXT:    global_store_dwordx4 v32, v[4:7], s[70:71] offset:16
+; CHECK-NEXT:    scratch_load_dwordx4 v[0:3], off, off offset:128 ; 16-byte Folded Reload
+; CHECK-NEXT:    s_nop 0
+; CHECK-NEXT:    scratch_load_dwordx4 v[4:7], off, off offset:144 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[8:11], off, off offset:160 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[12:15], off, off offset:176 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[16:19], off, off offset:192 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[20:23], off, off offset:208 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[24:27], off, off offset:224 ; 16-byte Folded Reload
+; CHECK-NEXT:    scratch_load_dwordx4 v[28:31], off, off offset:240 ; 16-byte Folded Reload
+; CHECK-NEXT:    s_waitcnt vmcnt(0)
+; CHECK-NEXT:    global_store_dwordx4 v32, v[28:31], s[70:71] offset:240
+; CHECK-NEXT:    global_store_dwordx4 v32, v[24:27], s[70:71] offset:224
+; CHECK-NEXT:    global_store_dwordx4 v32, v[20:23], s[70:71] offset:208
+; CHECK-NEXT:    global_store_dwordx4 v32, v[16:19], s[70:71] offset:192
+; CHECK-NEXT:    global_store_dwordx4 v32, v[12:15], s[70:71] offset:176
+; CHECK-NEXT:    global_store_dwordx4 v32, v[8:11], s[70:71] offset:160
+; CHECK-NEXT:    global_store_dwordx4 v32, v[4:7], s[70:71] offset:144
+; CHECK-NEXT:    global_store_dwordx4 v32, v[0:3], s[70:71] offset:128
+; CHECK-NEXT:    scratch_load_dwordx2 v[0:1], off, off offset:532 ; 8-byte Folded Reload
+; CHECK-NEXT:    s_waitcnt vmcnt(0)
+; CHECK-NEXT:    global_store_dword v32, v1, s[70:71]
+; CHECK-NEXT:    s_endpgm
+entry:
+  %tid = call i32 @llvm.amdgcn.workitem.id.x()
+  %pa = getelementptr float, ptr addrspace(1) %in, i32 %tid
+  %a = load float, ptr addrspace(1) %pa
+  %pb = getelementptr float, ptr addrspace(1) %pa, i32 64
+  %b = load float, ptr addrspace(1) %pb
+  %pc0 = getelementptr <32 x float>, ptr addrspace(1) %out, i32 0
+  %c0 = load <32 x float>, ptr addrspace(1) %pc0
+  %pc1 = getelementptr <32 x float>, ptr addrspace(1) %out, i32 1
+  %c1 = load <32 x float>, ptr addrspace(1) %pc1
+  br label %loop
+loop:
+  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ]
+  %x = phi float [ 0.0, %entry ], [ %x.next1, %loop ]
+  %acc0 = phi <32 x float> [ %c0, %entry ], [ %m0, %loop ]
+  %acc1 = phi <32 x float> [ %c1, %entry ], [ %m1, %loop ]
+  %iv.0 = add i32 %iv, 0
+  %g0 = getelementptr float, ptr addrspace(1) %pa, i32 %iv.0
+  %l0 = load float, ptr addrspace(1) %g0
+  %iv.1 = add i32 %iv, 256
+  %g1 = getelementptr float, ptr addrspace(1) %pa, i32 %iv.1
+  %l1 = load float, ptr addrspace(1) %g1
+  %iv.2 = add i32 %iv, 512
+  %g2 = getelementptr float, ptr addrspace(1) %pa, i32 %iv.2
+  %l2 = load float, ptr addrspace(1) %g2
+  %iv.3 = add i32 %iv, 768
+  %g3 = getelementptr float, ptr addrspace(1) %pa, i32 %iv.3
+  %l3 = load float, ptr addrspace(1) %g3
+  %h0 = call <32 x float> @llvm.amdgcn.mfma.f32.32x32x1f32(float %l0, float %l1, <32 x float> %acc0, i32 0, i32 0, i32 0)
+  %m0 = call <32 x float> @llvm.amdgcn.mfma.f32.32x32x1f32(float %l2, float %l3, <32 x float> %h0, i32 0, i32 0, i32 0)
+  %h1 = call <32 x float> @llvm.amdgcn.mfma.f32.32x32x1f32(float %l0, float %l1, <32 x float> %acc1, i32 0, i32 0, i32 0)
+  %m1 = call <32 x float> @llvm.amdgcn.mfma.f32.32x32x1f32(float %l2, float %l3, <32 x float> %h1, i32 0, i32 0, i32 0)
+  %e0 = extractelement <32 x float> %h0, i32 0
+  %x.next0 = call float @llvm.maxnum.f32(float %x, float %e0)
+  %e1 = extractelement <32 x float> %h1, i32 1
+  %x.next1 = call float @llvm.maxnum.f32(float %x.next0, float %e1)
+  %iv.next = add i32 %iv, 1
+  %cc = icmp slt i32 %iv.next, %n
+  br i1 %cc, label %loop, label %exit
+exit:
+  store <32 x float> %m0, ptr addrspace(1) %pc0
+  store <32 x float> %m1, ptr addrspace(1) %pc1
+  store float %x.next1, ptr addrspace(1) %out
+  ret void
+}
+
 declare i32 @llvm.amdgcn.workitem.id.x()
+declare float @llvm.maxnum.f32(float, float)
 declare <16 x float> @llvm.amdgcn.mfma.f32.32x32x16.bf16(<8 x bfloat>, <8 x bfloat>, <16 x float>, i32 immarg, i32 immarg, i32 immarg)
+declare <32 x float> @llvm.amdgcn.mfma.f32.32x32x1f32(float, float, <32 x float>, i32 immarg, i32 immarg, i32 immarg)
 
 attributes #0 = { "amdgpu-waves-per-eu"="8,8" }
+attributes #1 = { "amdgpu-waves-per-eu"="8,8" "amdgpu-agpr-alloc"="0" }
