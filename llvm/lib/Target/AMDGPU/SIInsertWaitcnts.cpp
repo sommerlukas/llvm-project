@@ -54,7 +54,7 @@ static cl::opt<bool>
 static cl::opt<bool> ForceEmitZeroLoadFlag(
     "amdgpu-waitcnt-load-forcezero",
     cl::desc("Force all waitcnt load counters to wait until 0"),
-    cl::init(false), cl::Hidden);
+    cl::init(true), cl::Hidden);
 
 namespace {
 
